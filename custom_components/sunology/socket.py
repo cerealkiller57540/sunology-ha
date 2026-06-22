@@ -139,8 +139,8 @@ class SunologySocket():
         else:
             _LOGGER.debug('Socket not connected')
             if auth_token is not None:
-                _LOGGER.debug('Auth connection')
-                async with connect(f"ws://{lan_host_ip}:{lan_port}/{basepath}", additional_headers={'token': auth_token}) as websocket:
+                _LOGGER.info('Auth connection')
+                async with connect(f"ws://{lan_host_ip}:{lan_port}/{basepath}", open_timeout=10, ping_timeout=20, ping_interval=20, close_timeout=10, additional_headers={'token': auth_token}) as websocket:
                     try:
                         self._socket = websocket
                         self._connected = True
@@ -150,12 +150,14 @@ class SunologySocket():
                     except ConnectionClosed:
                         await asyncio.sleep(end_timeout)
                         _LOGGER.info(f"Connection closed")
-                    except e:
+                    except Exception as e:
                         await asyncio.sleep(end_timeout)
                         _LOGGER.warn(f"unhandled excepiton {e}")
+                    except:
+                        _LOGGER.warn(f"Not even an exception")
             else:
-                _LOGGER.debug('Unauth connection')
-                async with connect(f"ws://{lan_host_ip}:{lan_port}/{basepath}") as websocket :
+                _LOGGER.info('Unauth connection')
+                async with connect(f"ws://{lan_host_ip}:{lan_port}/{basepath}", open_timeout=10, ping_timeout=20, ping_interval=20, close_timeout=10) as websocket :
                     try:
                         self._socket = websocket
                         self._connected = True
@@ -164,10 +166,13 @@ class SunologySocket():
                             self.process(message)
                     except ConnectionClosed:
                         await asyncio.sleep(end_timeout)
-                        _LOGGER.debug(f"Connection closed")
-                    except e:
+                        _LOGGER.info(f"Connection closed")
+                    except Exception as e:
                         await asyncio.sleep(end_timeout)
                         _LOGGER.warn(f"unhandled excepiton {e}")
+                    except:
+                        _LOGGER.warn(f"Not even an exception")
+
             self._connected = False
             self.on_disconnect()
 

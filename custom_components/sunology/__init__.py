@@ -163,15 +163,16 @@ class SunologyContext:
             await zc.async_wait_for_start()
             resolver = AddressResolver(host)
             for i in range(15):
-                _LOGGER.debug(f"Try {i} to resolve {host}")
+                _LOGGER.info(f"Try {i} to resolve {host}")
                 if await resolver.async_request(zc, 3000):
                     host_ip_obj = resolver.ip_addresses_by_version(IPVersion.All)
                     host_ip = str(host_ip_obj[0])
-                    _LOGGER.debug(f"{host} IP addresses: {host_ip}")
+                    _LOGGER.info(f"{host} IP addresses: {host_ip}")
                     break
                 else:
-                    _LOGGER.error(f"Name {host} not resolved")
+                    _LOGGER.info(f"Name {host} not resolved")
                     await asyncio.sleep(5)
+        _LOGGER.info(f"Trying to connect with {host_ip}")
         await socket.connect(host_ip, port, None)
         
 
@@ -309,7 +310,7 @@ class SunologyContext:
         new_devices = []
         found = False
         for coordinated_device in self._sunology_devices_coordinated:
-            _LOGGER.info("Check if device %s is already known %s", product_data['id'], coordinated_device['device'].device_id)
+            _LOGGER.debug("Check if device %s is already known %s", product_data['id'], coordinated_device['device'].device_id)
             if 'device' in coordinated_device.keys():
                 device = coordinated_device['device']
                 if device.device_id == product_data['id']:
@@ -405,7 +406,7 @@ class SunologyContext:
     @callback
     def on_solarEvent_callback(self, data):
         """on solarEvent callback"""
-        _LOGGER.info("On solarEvent received")
+        _LOGGER.debug("On solarEvent received")
         for coordinated_device in self._sunology_devices_coordinated:
             device = coordinated_device['device']
             coordinator = coordinated_device['coordinator']
@@ -432,7 +433,7 @@ class SunologyContext:
     @callback
     def on_batteryEvent_callback(self, data):
         """on batteryEvent callback"""
-        _LOGGER.info("On batteryEvent received")
+        _LOGGER.debug("On batteryEvent received")
         for coordinated_device in self._sunology_devices_coordinated:
             device = coordinated_device['device']
             coordinator = coordinated_device['coordinator']
@@ -463,11 +464,10 @@ class SunologyContext:
                     _LOGGER.info("Solar event receive on non storey master device")
                 break
 
-    
     @callback
     def on_gridEvent_callback(self, data):
         """on gridEvent callback"""
-        _LOGGER.info("On gridEvent received")
+        _LOGGER.debug("On gridEvent received")
         for coordinated_device in self._sunology_devices_coordinated:
             device = coordinated_device['device']
             coordinator = coordinated_device['coordinator']
