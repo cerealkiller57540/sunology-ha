@@ -1,4 +1,4 @@
-""" sunology custom conpennt """
+"""Sunology custom component"""
 from collections import defaultdict
 
 import asyncio
@@ -9,11 +9,6 @@ from zeroconf import AddressResolver, IPVersion, Zeroconf
 from zeroconf.asyncio import AsyncZeroconf
 import math
 import time
-import json
-from threading import Thread
-import jwt
-
-from aiohttp.web import json_response
 
 from homeassistant import config_entries
 from homeassistant.core import callback
@@ -43,6 +38,7 @@ from .device import (
     SolarEventInterface,
     BatteryEventInterface,
     SmartMeter_3P,
+    SmartOutlet,
     LinkyTransmitter
 )
 
@@ -184,9 +180,10 @@ class SunologyContext:
         socket.subscribe_on_solarEvent(self.on_solarEvent_callback)
         socket.subscribe_on_batteryEvent(self.on_batteryEvent_callback)
         socket.subscribe_on_gridEvent(self.on_gridEvent_callback)
+        socket.subscribe_on_onOffEvent(self.on_onOffEvent_callback)
 
         socket.subscribe_on_connect(self.on_connect_callback)
-        socket.subscribe_on_diconnect(self.on_disconnect_callback)
+        socket.subscribe_on_disconnect(self.on_disconnect_callback)
 
         self._socket = socket
 
@@ -255,7 +252,7 @@ class SunologyContext:
     def remove_devices_from_coordinator(self, device: SunologyAbstractDevice):
         for coordinated_device in self._sunology_devices_coordinated:
             if device.unique_id == coordinated_device['device'].unique_id:
-                self._sunology_devices_coordinated.pop(coordinated_device)
+                self._sunology_devices_coordinated.remove(coordinated_device)
 
     async def refresh_devices(self):
         """ here we return last device by id"""
@@ -357,6 +354,8 @@ class SunologyContext:
                     if "devices" in product_data.keys():
                         for hub_device in product_data['devices']:
                             new_devices.extend(self.process_new_device(hub_device))
+                case "STREAM_OUTLET":
+                    new_devices.append(SmartOutlet(product_data))
                 case "STOREY":
                     master = StoreyMaster(product_data)
                     products_valid=True
@@ -406,7 +405,7 @@ class SunologyContext:
     @callback
     def on_solarEvent_callback(self, data):
         """on solarEvent callback"""
-        _LOGGER.debug("On solarEvent received")
+        _LOGGER.info("On solarEvent received %s", data['id'])
         for coordinated_device in self._sunology_devices_coordinated:
             device = coordinated_device['device']
             coordinator = coordinated_device['coordinator']
@@ -433,7 +432,7 @@ class SunologyContext:
     @callback
     def on_batteryEvent_callback(self, data):
         """on batteryEvent callback"""
-        _LOGGER.debug("On batteryEvent received")
+        _LOGGER.info("On batteryEvent received %s", data['id'])
         for coordinated_device in self._sunology_devices_coordinated:
             device = coordinated_device['device']
             coordinator = coordinated_device['coordinator']
@@ -467,7 +466,7 @@ class SunologyContext:
     @callback
     def on_gridEvent_callback(self, data):
         """on gridEvent callback"""
-        _LOGGER.debug("On gridEvent received")
+        _LOGGER.info("On gridEvent received %s", data['id'])
         for coordinated_device in self._sunology_devices_coordinated:
             device = coordinated_device['device']
             coordinator = coordinated_device['coordinator']
@@ -480,6 +479,28 @@ class SunologyContext:
                             entity.schedule_update_ha_state(force_refresh=False)
                 else:
                     _LOGGER.info("Grid event receive on non grid meter device")
+                event_data = {
+                    "device_id": device.unique_id,
+                    "device_name": device.name
+                }
+                break
+    
+    @callback
+    def on_onOffEvent_callback(self, data):
+        """on gridEvent callback"""
+        _LOGGER.info("On onOffEvent received %s, %s", data['id'], data)
+        for coordinated_device in self._sunology_devices_coordinated:
+            device = coordinated_device['device']
+            coordinator = coordinated_device['coordinator']
+            if device.device_id == data['id']:
+                if isinstance(device, (SmartOutlet)):
+                    device.update_onOff_event(data)
+                    if 'device_entities' in coordinated_device.keys():
+                        for entity in coordinated_device['device_entities']:
+                            _LOGGER.debug('Update entity %s', entity.entity_id)
+                            entity.schedule_update_ha_state(force_refresh=False)
+                else:
+                    _LOGGER.info("OnOff event receive on non grid meter device")
                 event_data = {
                     "device_id": device.unique_id,
                     "device_name": device.name,
@@ -499,4 +520,3 @@ class SunologyContext:
             self._async_connect(self.socket, self.gateway_host, self.gateway_port, None), self._hass.loop
         ))
         self._connection_atempt+=1
-

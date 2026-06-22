@@ -20,6 +20,9 @@ class SunologyAbstractDevice():
         self._parent_id: str = raw_device['parentId'] if 'parentId' in raw_device.keys() else None
         self._name: str = raw_device['name'] if 'name' in raw_device.keys() else f"{self.model_name} {self.device_id}"
         self._rssi: int = raw_device['rssi'] if 'rssi' in raw_device.keys() else raw_device['rssiWifi'] if 'rssiWifi' in raw_device.keys() else None
+        self._bssid: int = raw_device['bssid'] if 'bssid' in raw_device.keys() else None
+        self._wifiIP: int = raw_device['wifiIP'] if 'wifiIP' in raw_device.keys() else None
+        self._ethIP: int = raw_device['ethIP'] if 'ethIP' in raw_device.keys() else None
 
     @property
     def default_manufacturer(self) -> str:
@@ -79,6 +82,18 @@ class SunologyAbstractDevice():
     def rssi(self):
         return self._rssi
 
+    @property
+    def bssid(self):
+        return self._bssid
+    
+    @property
+    def wifiIP(self):
+        return self._wifiIP
+
+    @property
+    def ethIP(self):
+        return self._ethIP
+
     def update_product(self, raw_event):
         if 'rssi' in raw_event.keys():
             self._rssi = raw_event['rssi']
@@ -89,7 +104,15 @@ class SunologyAbstractDevice():
         if 'swVersion' in raw_event.keys():
             self._software_version = raw_event['swVersion']
 
-    
+        if 'bssid' in raw_event.keys():
+            self._bssid = raw_event['bssid']
+
+        if 'wifiIP' in raw_event.keys():
+            self._wifiIP = raw_event['wifiIP']
+
+        if 'ethIP' in raw_event.keys():
+            self._ethIP = raw_event['ethIP']
+
     @property
     def device_info(self):
         """Return the device info."""
@@ -560,22 +583,152 @@ class SmartMeter_ElectricalDataFeatures():
         else:
             self._electricalDataP3 = ElectricalDataFeature.UNUSED
 
+class FlowDevice_FlowNodeConfig():
+    """Home Assistant representation of a Sunology SmartMeter_electrical_data_feature property."""
 
-        if 'flowConfig' in raw_electrical_data_feature.keys():
-            if 'flowReady' in raw_electrical_data_feature['flowConfig'].keys():
-                self._flow_ready = raw_electrical_data_feature['flowReady']
-            if 'estimatedPowerUsage' in raw_electrical_data_feature['flowConfig'].keys():
-                self._estimated_power_usage = raw_electrical_data_feature['flowConfig']['estimatedPowerUsage']
-            if 'minActiveTime' in raw_electrical_data_feature['flowConfig'].keys():
-                self._min_active_time = raw_electrical_data_feature['flowConfig']['minActiveTime']
-            if 'maxActiveTime' in raw_electrical_data_feature['flowConfig'].keys():
-                self._max_active_time = raw_electrical_data_feature['flowConfig']['maxActiveTime']
-            if 'minEnergyUsage' in raw_electrical_data_feature['flowConfig'].keys():
-                self._min_energy_usage = raw_electrical_data_feature['flowConfig']['minEnergyUsage']
-            if 'maxEnergyUsage' in raw_electrical_data_feature['flowConfig'].keys():
-                self._max_energy_usage = raw_electrical_data_feature['flowConfig']['maxEnergyUsage']
-            if 'priority' in raw_electrical_data_feature['flowConfig'].keys():
-                self._priority = raw_electrical_data_feature['flowConfig']['priority']
+    def __init__(self, enabled=None, mode=None, priority=None, type=None, autoCalib=None, efficiency=None,
+                 dailyRuntimeEn=None, runtimeMin=None, runtimeMax=None, dailyEnergyEn=None,
+                 energyMin=None, energyMax=None, minOnTime=None, minCons=None, maxCons=None,
+                 minProd=None, maxProd=None):
+        """Initialize SmartMeter_electrical_data property."""
+        self._enabled = enabled
+        self._mode = mode
+        self._priority = priority
+        self._type = type
+        self._autoCalib = autoCalib
+        self._efficiency = efficiency
+        self._dailyRuntimeEn = dailyRuntimeEn
+        self._runtimeMin = runtimeMin
+        self._runtimeMax = runtimeMax
+        self._dailyEnergyEn = dailyEnergyEn
+        self._energyMin = energyMin
+        self._energyMax = energyMax
+        self._minOnTime = minOnTime
+        self._minCons = minCons
+        self._maxCons = maxCons
+        self._minProd = minProd
+        self._maxProd = maxProd
+    
+    @property
+    def enabled(self):
+        """True if the device is part of the Flow (false will be skipped for any feature)"""
+        return self._enabled
+
+    @property
+    def mode(self):
+        """Get the mode"""
+        return self._mode
+
+    @property
+    def priority(self):
+        """Get the priority"""
+        return self._priority
+
+    @property
+    def type(self):
+        """Get the type"""
+        return self._type
+
+    @property
+    def autoCalib(self):
+        """True if the device supports auto calibration (power measurement for consumer)"""
+        return self._autoCalib
+
+    @property
+    def efficiency(self):
+        """Device efficiency in percent. i.e. 80.3 = 80.3%"""
+        return self._efficiency
+
+    @property
+    def dailyRuntimeEn(self):
+        """True if the device supports daily runtime feature"""
+        return self._dailyRuntimeEn
+
+    @property
+    def runtimeMin(self):
+        """Minimum daily active time in minutes"""
+        return self._runtimeMin
+
+    @property
+    def runtimeMax(self):
+        """Maximum daily active time in minutes"""
+        return self._runtimeMax
+
+    @property
+    def dailyEnergyEn(self):
+        """True if the device supports daily energy feature"""
+        return self._dailyEnergyEn
+
+    @property
+    def energyMin(self):
+        """Minimum daily energy usage in Wh"""
+        return self._energyMin
+
+    @property
+    def energyMax(self):
+        """Maximum daily energy usage in Wh"""
+        return self._energyMax
+
+    @property
+    def minOnTime(self):
+        """Minimal on time in seconds to prevent hardware degradation"""
+        return self._minOnTime
+
+    @property
+    def minCons(self):
+        """Minimum consumption power usage"""
+        return self._minCons
+
+    @property
+    def maxCons(self):
+        """Maximum consumption power usage"""
+        return self._maxCons
+
+    @property
+    def minProd(self):
+        """Minimum production power usage"""
+        return self._minProd
+
+    @property
+    def maxProd(self):
+        """Maximum production power usage"""
+        return self._maxProd
+
+    def update_flowNode(self, raw_flowNode):
+        if 'enabled' in raw_flowNode.keys():
+            self._enabled = raw_flowNode['enabled']
+        if 'mode' in raw_flowNode.keys():
+            self._mode = raw_flowNode['mode']
+        if 'priority' in raw_flowNode.keys():
+            self._priority = raw_flowNode['priority']
+        if 'type' in raw_flowNode.keys():
+            self._type = raw_flowNode['type']
+        if 'autoCalib' in raw_flowNode.keys():
+            self._autoCalib = raw_flowNode['autoCalib']
+        if 'efficiency' in raw_flowNode.keys():
+            self._efficiency = raw_flowNode['efficiency']
+        if 'dailyRuntimeEn' in raw_flowNode.keys():
+            self._dailyRuntimeEn = raw_flowNode['dailyRuntimeEn']
+        if 'runtimeMin' in raw_flowNode.keys():
+            self._runtimeMin = raw_flowNode['runtimeMin']
+        if 'runtimeMax' in raw_flowNode.keys():
+            self._runtimeMax = raw_flowNode['runtimeMax']
+        if 'dailyEnergyEn' in raw_flowNode.keys():
+            self._dailyEnergyEn = raw_flowNode['dailyEnergyEn']
+        if 'energyMin' in raw_flowNode.keys():
+            self._energyMin = raw_flowNode['energyMin']
+        if 'energyMax' in raw_flowNode.keys():
+            self._energyMax = raw_flowNode['energyMax']
+        if 'minOnTime' in raw_flowNode.keys():
+            self._minOnTime = raw_flowNode['minOnTime']
+        if 'minCons' in raw_flowNode.keys():
+            self._minCons = raw_flowNode['minCons']
+        if 'maxCons' in raw_flowNode.keys():
+            self._maxCons = raw_flowNode['maxCons']
+        if 'minProd' in raw_flowNode.keys():
+            self._minProd = raw_flowNode['minProd']
+        if 'maxProd' in raw_flowNode.keys():
+            self._maxProd = raw_flowNode['maxProd']
 
 class SmartMeter_IndexesErl():
     """Home Assistant representation of a Sunology SmartMeter_IndexesErl property."""
@@ -653,6 +806,67 @@ class SmartMeter_IndexesErl():
             self._energy_consumed_indexed[SmartMeterTarifIndex.INDEX_9] = raw_indexes_erl['energyConsumedIdx9']
         if 'energyConsumed_Ix10' in raw_indexes_erl.keys():
             self._energy_consumed_indexed[SmartMeterTarifIndex.INDEX_10] = raw_indexes_erl['energyConsumedIdx10']
+
+class SmartOutlet(SunologyAbstractDevice):
+    """Home Assistant representation of a Sunology device Smart."""
+
+    def __init__(self, raw_device):
+        """Initialize Pulse device."""
+        super().__init__(raw_device)
+
+        self._electrical_data = {
+            SmartMeterPhase.ALL: SmartMeter_ElectricalData()
+        }
+        self._state = None
+        self._flowNodeConfig = FlowDevice_FlowNodeConfig()
+        self._features = SmartMeter_ElectricalDataFeatures()
+        if 'features' in raw_device.keys():
+            self._features.update_electrical_data_feature(raw_device['features'])
+
+    @property
+    def state(self):
+        """Get the state."""
+        return self._state
+
+    @property
+    def suggested_area(self) -> str:
+        """Get the suggested_area."""
+        return "Livingroom"
+        
+    @property
+    def model_name(self) -> str:
+        """Get the model name."""
+        return "Pulse"
+    
+    @property
+    def device_info(self):
+        dev_info = super().device_info
+        return dev_info
+
+    @property
+    def flowNodeConfig(self):
+        """Get the flowMode"""
+        return self._flowNodeConfig
+
+    @property
+    def electrical_data(self):
+        """Get the electrical_data"""
+        return self._electrical_data
+    
+    @property
+    def features(self):
+        """Get the features"""
+        return self._features
+
+    def update_onOff_event(self, raw_onOff_event):
+        if "onOff" in raw_onOff_event.keys():
+            self._state = raw_onOff_event['onOff']
+        if "electricalData" in raw_onOff_event.keys():
+            self.electrical_data[SmartMeterPhase.ALL].update_electrical_data(raw_onOff_event['electricalData'])
+
+    def __str__(self) -> str:
+        """Get string representation."""
+        return f"Sunology Device: {self.name}::{self.model_name}::{self.unique_id}"
 
 
 class LinkyTransmitter(SunologyAbstractDevice):

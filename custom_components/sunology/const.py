@@ -47,3 +47,9 @@ class FlowWorkingModes(StrEnum):
     """Phase of a smart meter."""
     COST_OPTIM = "COST_OPTIM"
     POWER_OPTIM = "POWER_OPTIM"
+
+class FeatureFlowNodeModes(StrEnum):
+    """Phase of a smart meter."""
+    FLOW = "FLOW"
+    FORCED_ON = "FORCED_ON"    
+    FORCED_OFF = "FORCED_OFF"

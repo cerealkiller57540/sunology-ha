@@ -6,11 +6,8 @@ from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
 from homeassistant.exceptions import HomeAssistantError
 
-import time
-import random
 import json
 from .const import PACKAGE_NAME
-
 
 _LOGGER = logging.getLogger(f"{PACKAGE_NAME}-socket")
 class SunologySocket():
@@ -20,10 +17,9 @@ class SunologySocket():
         self._on_solarEvent_callback = None
         self._on_batteryEvent_callback = None
         self._on_gridEvent_callback = None
+        self._on_onOffEvent_callback = None
         self._on_connect_callback = None
         self._on_disconnect_callback = None
-
-        self._initialised = False
         self._socket = None
         self._connected = False
 
@@ -35,6 +31,10 @@ class SunologySocket():
     def subscribe_on_solarEvent(self, callback_function):
         """event: tells you authentication informations."""
         self._on_solarEvent_callback = callback_function
+    
+    def subscribe_on_onOffEvent(self, callback_function):
+        """event: tells you authentication informations."""
+        self._on_onOffEvent_callback = callback_function
 
     def subscribe_on_batteryEvent(self, callback_function):
         """event: tells you when a device is added to the gateway."""
@@ -48,8 +48,8 @@ class SunologySocket():
         """event: tells you when you are connected to the socket."""
         self._on_connect_callback = callback_function
     
-    def subscribe_on_diconnect(self, callback_function):
-        """event: tells you when you are have lost connection of the socket."""
+    def subscribe_on_disconnect(self, callback_function):
+        """event: tells you when you have lost connection of the socket."""
         self._on_disconnect_callback = callback_function
 
     def _execute_callback_function_safe(self, function_name, function, data):
@@ -71,9 +71,14 @@ class SunologySocket():
         self._execute_callback_function_safe('on_productInfo', self._on_productInfo_callback, data)
     
     def on_solarEvent(self, data):
-        """ on_solarEvente """
+        """ on_solarEvent """
         _LOGGER.debug('SolarEvent received: %s', data)
         self._execute_callback_function_safe('on_solarEvent', self._on_solarEvent_callback, data)
+    
+    def on_onOffEvent(self, data):
+        """ on_solarEvent """
+        _LOGGER.debug('OnOffEvent received: %s', data)
+        self._execute_callback_function_safe('on_onOffEvent', self._on_onOffEvent_callback, data)
     
     def on_batteryEvent(self, data):
         """ on_batteryEvent """
@@ -87,7 +92,7 @@ class SunologySocket():
     
     def on_connect(self):
         """ event: connected """
-        _LOGGER.debug('Sunology socket connected')
+        _LOGGER.info('Sunology socket connected')
         if self._on_connect_callback is not None:
             self._on_connect_callback()
 
@@ -115,6 +120,8 @@ class SunologySocket():
                         self.on_batteryEvent(message['data'])
                     case "gridEvent":
                         self.on_gridEvent(message['data'])
+                    case "onOffEvent":
+                        self.on_onOffEvent(message['data'])
                     case _:
                         _LOGGER.warning('Unmanaged event received: %s', message['event'])
             else:
@@ -135,51 +142,69 @@ class SunologySocket():
         """ connect to the sunology socket"""
         _LOGGER.info('Socket connection call %s', lan_host_ip)
         if self._connected:
-            _LOGGER.warn('Socket already connected')
-        else:
-            _LOGGER.debug('Socket not connected')
-            if auth_token is not None:
-                _LOGGER.info('Auth connection')
-                async with connect(f"ws://{lan_host_ip}:{lan_port}/{basepath}", open_timeout=10, ping_timeout=20, ping_interval=20, close_timeout=10, additional_headers={'token': auth_token}) as websocket:
-                    try:
-                        self._socket = websocket
-                        self._connected = True
-                        self.on_connect()
-                        async for message in self._socket:
-                            self.process(message)
-                    except ConnectionClosed:
-                        await asyncio.sleep(end_timeout)
-                        _LOGGER.info(f"Connection closed")
-                    except Exception as e:
-                        await asyncio.sleep(end_timeout)
-                        _LOGGER.warn(f"unhandled excepiton {e}")
-                    except:
-                        _LOGGER.warn(f"Not even an exception")
-            else:
-                _LOGGER.info('Unauth connection')
-                async with connect(f"ws://{lan_host_ip}:{lan_port}/{basepath}", open_timeout=10, ping_timeout=20, ping_interval=20, close_timeout=10) as websocket :
-                    try:
-                        self._socket = websocket
-                        self._connected = True
-                        self.on_connect()
-                        async for message in self._socket:
-                            self.process(message)
-                    except ConnectionClosed:
-                        await asyncio.sleep(end_timeout)
-                        _LOGGER.info(f"Connection closed")
-                    except Exception as e:
-                        await asyncio.sleep(end_timeout)
-                        _LOGGER.warn(f"unhandled excepiton {e}")
-                    except:
-                        _LOGGER.warn(f"Not even an exception")
+            _LOGGER.warning('Socket already connected')
+            return
 
+        _LOGGER.debug('Socket not connected')
+
+        try:
+            async with asyncio.timeout(end_timeout):
+                if auth_token is not None:
+                    _LOGGER.info('Auth connection')
+                    websocket = await connect(
+                        f"ws://{lan_host_ip}:{lan_port}/{basepath}",
+                        open_timeout=10,
+                        ping_timeout=20,
+                        ping_interval=20,
+                        close_timeout=10,
+                        additional_headers={'token': auth_token}
+                    )
+                else:
+                    _LOGGER.info('Unauth connection')
+                    websocket = await connect(
+                        f"ws://{lan_host_ip}:{lan_port}/{basepath}",
+                        open_timeout=10,
+                        ping_timeout=20,
+                        ping_interval=20,
+                        close_timeout=10
+                    )
+
+                self._socket = websocket
+                self._connected = True
+                self.on_connect()
+
+                try:
+                    async for message in self._socket:
+                        self.process(message)
+                except ConnectionClosed:
+                    _LOGGER.info("Connection closed by server")
+                except asyncio.TimeoutError:
+                    _LOGGER.warning("Message receive timeout")
+                except Exception as e:
+                    _LOGGER.warning(f"Error receiving message: {e}")
+
+        except asyncio.TimeoutError:
+            _LOGGER.warning("Connection timeout - server unreachable")
+        except ConnectionClosed:
+            _LOGGER.info("Connection closed during setup")
+        except Exception as e:
+            _LOGGER.warning(f"Connection error: {e}")
+        finally:
             self._connected = False
+            if self._socket is not None:
+                try:
+                    await self._socket.close()
+                except:
+                    pass
             self.on_disconnect()
 
         
     async def disconnect(self):
-        """disconnect from the sunology socket"""
-        if self._socket is not None:
-            await self._socket.close()
+        """Disconnect from the sunology socket"""
         self._connected = False
+        if self._socket is not None:
+            try:
+                await self._socket.close()
+            except Exception:
+                _LOGGER.debug("Error closing socket", exc_info=True)
         self.on_disconnect()

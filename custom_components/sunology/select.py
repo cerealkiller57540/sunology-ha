@@ -7,10 +7,11 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.components.select import SelectEntity, ENTITY_ID_FORMAT
 
 
-from .const import FlowWorkingModes, PACKAGE_NAME, DOMAIN as SUNOLOGY_DOMAIN
+from .const import FlowWorkingModes, FeatureFlowNodeModes, PACKAGE_NAME, DOMAIN as SUNOLOGY_DOMAIN
 from .device import (
     SunologyAbstractDevice,
-    Gateway
+    Gateway,
+    SmartOutlet
 )
 
 _LOGGER = logging.getLogger(PACKAGE_NAME) 
@@ -47,6 +48,9 @@ async def async_setup_entry(hass, config_entry, async_add_entities): # pylint: d
                 new_entities = []
                 if isinstance(device, Gateway):
                     new_entities.append(SunologFlowWorkingModeSelectEntity(device, hass))
+                
+                if isinstance(device, SmartOutlet):
+                    new_entities.append(SunologFlowNodeModeSelectEntity(device,hass))
 
                 if not 'device_entities' in coordinated_device: 
                     coordinated_device['device_entities'] = []
@@ -117,6 +121,73 @@ class SunologFlowWorkingModeSelectEntity(SelectEntity):
     def icon(self):
         """icon getter"""
         return "mdi:finance"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return the device info."""
+        return self._device.device_info
+
+class SunologFlowNodeModeSelectEntity(SelectEntity):
+    """Represent a pvpower of a  device."""
+
+    def __init__(self, device:SunologyAbstractDevice, hass):
+        """Set up SunologFlowNodeModeSensor entity."""
+        
+        self._device = device
+        self._name = device.name
+        self.entity_id = f"{ENTITY_ID_FORMAT.format(f"flowNodeMode")}_{_format_devid_mac(device.device_id)}".lower()# pylint: disable=C0301
+        self._attr_device_info = device.device_info # For automatic device registration
+        self._state = None
+        self._hass = hass
+
+    @property
+    def entity_category(self):
+        return None
+
+    @property
+    def hass(self):
+        return self._hass
+
+    @hass.setter
+    def hass(self, hass):
+        pass
+
+    @property
+    def unique_id(self):
+        """Return the unique ID."""
+        return f"flowNodeMode_{_format_devid_mac(self._device.device_id)}".lower()
+
+    @property
+    def current_option(self):
+        """state property"""
+        return self.state
+
+    @property
+    def state(self):
+        """state property"""
+        self._state = self._device.flowNodeConfig.mode
+        return self._state
+
+    @property
+    def options(self):
+        """options list property"""
+        return [e.name for e in FeatureFlowNodeModes]
+    
+
+    async def async_select_option(self, option: str) -> None:
+        """Change the selected option."""
+        self._state = self._device.flow_working_mode = option
+        await self._device._set_flowWorkingMode(option)
+
+    @property
+    def name(self):
+        """ pvP name """
+        return f"{self._name} flow node mode"
+
+    @property
+    def icon(self):
+        """icon getter"""
+        return "mdi:lock-clock"
 
     @property
     def device_info(self) -> DeviceInfo:

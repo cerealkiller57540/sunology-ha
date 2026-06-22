@@ -23,7 +23,8 @@ from .device import (
     SolarEventInterface,
     BatteryEventInterface,
     SmartMeter_3P,
-    LinkyTransmitter
+    LinkyTransmitter,
+    SmartOutlet
 )
 
 _LOGGER = logging.getLogger(PACKAGE_NAME) 
@@ -102,6 +103,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities): # pylint: d
                     new_entities.append(SunologyTotalImportSensorEntity(device,  SmartMeterPhase.PHASE_3, hass))
                     new_entities.append(SunologyElectricalDataSensorEntityFeature(device, SmartMeterPhase.PHASE_3, hass))
                     new_entities.append(SunologyElectricityFrequencySensorEntity(device, hass))
+
                 if isinstance(device, LinkyTransmitter):
                     new_entities.append(SunologyApparentPowerImportSensorEntity(device, hass))
                     new_entities.append(SunologyApparentPowerExportSensorEntity(device, hass))
@@ -119,6 +121,18 @@ async def async_setup_entry(hass, config_entry, async_add_entities): # pylint: d
                     new_entities.append(SunologyImportSensorEntity_PeriodIndex(device,  SmartMeterTarifIndex.INDEX_10, hass))
                     new_entities.append(SunologyContractSensorEntity(device, hass))
                     new_entities.append(SunologyCurrentTarifSensorEntity(device, hass))
+                
+                if isinstance(device, SmartOutlet):
+                    new_entities.append(SunologyElectricalDataSensorEntity_Power(device,  SmartMeterPhase.ALL, hass))
+                    new_entities.append(SunologyElectricalDataSensorEntity_Power(device,  SmartMeterPhase.ALL, hass, True))
+                    new_entities.append(SunologyTotalImportSensorEntity(device,  SmartMeterPhase.ALL, hass))
+                    new_entities.append(SunologyElectricalDataSensorEntityFeature(device, SmartMeterPhase.ALL, hass))
+
+
+                if isinstance(device, (Gateway)):
+                    new_entities.append(SunologyWifiApBssidSensorEntity(device, hass))
+                    new_entities.append(SunologyWifiIpSensorEntity(device, hass))
+                    new_entities.append(SunologyEthIpSensorEntity(device, hass))
 
                 new_entities.append(SunologyRssiSensorEntity(device, hass))
 
@@ -1199,8 +1213,7 @@ class SunologyElectricalDataSensorEntity_Power(SensorEntity):
         self._unit_of_measurement = "W"
         self._phase = phase
         self._reversed = reversed_state
-        self._entity_registry_enabled_default = reversed_state
-        self.entity_id = f"{ENTITY_ID_FORMAT.format(f"edPower")}_{self._phase}_{"reversed_" if self._reversed else ""}{_format_devid_mac(device.device_id)}".lower()# pylint: disable=C0301
+        self.entity_id = f"{ENTITY_ID_FORMAT.format(f"power")}_{self._phase}_{"reversed_" if self._reversed else ""}{_format_devid_mac(device.device_id)}".lower()# pylint: disable=C0301
         self._state = None
         self._hass = hass
     
@@ -1263,7 +1276,7 @@ class SunologyElectricalDataSensorEntity_Power(SensorEntity):
     @property
     def entity_registry_enabled_default(self):
         """Dsiable entity in reversed by default"""
-        return self._entity_registry_enabled_default
+        return self._reversed
 
     @property
     def state_class(self):
@@ -1683,6 +1696,172 @@ class SunologyRssiSensorEntity(SensorEntity):
     def device_class(self):
         """ Entity device_class """
         return SensorDeviceClass.SIGNAL_STRENGTH
+
+    @property
+    def entity_category(self):
+        """ Entity entity_category """
+        return EntityCategory.DIAGNOSTIC
+
+
+class SunologyEthIpSensorEntity(SensorEntity):
+    """Represent a mipower of a  device."""
+
+    def __init__(self, device:SunologyAbstractDevice, hass):
+        """Set up SunologBatteryPowerSensor entity."""
+        self._device = device
+        self._name = device.name
+        self.entity_id = f"{ENTITY_ID_FORMAT.format(f"ethIP")}_{_format_devid_mac(device.device_id)}".lower()# pylint: disable=C0301
+        self._state = None
+        self._hass = hass
+
+    @property
+    def entity_category(self):
+        return None
+
+    @property
+    def hass(self):
+        return self._hass
+
+    @hass.setter
+    def hass(self, hass):
+        pass
+
+    @property
+    def unique_id(self):
+        """Return the unique ID."""
+        return f"ethIP_{_format_devid_mac(self._device.device_id)}".lower()
+
+    @property
+    def state(self):
+        """state property"""
+        self._state = self._device.ethIP
+        return self._state
+
+
+    @property
+    def name(self):
+        """ Entity name """
+        return f"{self._name} Ethernet IP"
+
+    @property
+    def icon(self):
+        """icon getter"""
+        return "mdi:ethernet"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return the device info."""
+        return self._device.device_info
+
+    @property
+    def entity_category(self):
+        """ Entity entity_category """
+        return EntityCategory.DIAGNOSTIC
+
+
+class SunologyWifiIpSensorEntity(SensorEntity):
+    """Represent a mipower of a  device."""
+
+    def __init__(self, device:SunologyAbstractDevice, hass):
+        """Set up SunologBatteryPowerSensor entity."""
+        self._device = device
+        self._name = device.name
+        self.entity_id = f"{ENTITY_ID_FORMAT.format(f"wifiIP")}_{_format_devid_mac(device.device_id)}".lower()# pylint: disable=C0301
+        self._state = None
+        self._hass = hass
+
+    @property
+    def entity_category(self):
+        return None
+
+    @property
+    def hass(self):
+        return self._hass
+
+    @hass.setter
+    def hass(self, hass):
+        pass
+
+    @property
+    def unique_id(self):
+        """Return the unique ID."""
+        return f"wifiIP_{_format_devid_mac(self._device.device_id)}".lower()
+
+    @property
+    def state(self):
+        """state property"""
+        self._state = self._device.wifiIP
+        return self._state
+
+    @property
+    def name(self):
+        """ Entity name """
+        return f"{self._name} Wifi IP"
+
+    @property
+    def icon(self):
+        """icon getter"""
+        return "mdi:wifi"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return the device info."""
+        return self._device.device_info
+
+    @property
+    def entity_category(self):
+        """ Entity entity_category """
+        return EntityCategory.DIAGNOSTIC
+
+
+class SunologyWifiApBssidSensorEntity(SensorEntity):
+    """Represent a mipower of a  device."""
+
+    def __init__(self, device:SunologyAbstractDevice, hass):
+        """Set up SunologBatteryPowerSensor entity."""
+        self._device = device
+        self._name = device.name
+        self.entity_id = f"{ENTITY_ID_FORMAT.format(f"wifiApBssid")}_{_format_devid_mac(device.device_id)}".lower()# pylint: disable=C0301
+        self._state = None
+        self._hass = hass
+
+    @property
+    def entity_category(self):
+        return None
+
+    @property
+    def hass(self):
+        return self._hass
+
+    @hass.setter
+    def hass(self, hass):
+        pass
+
+    @property
+    def unique_id(self):
+        """Return the unique ID."""
+        return f"wifiApBssid_{_format_devid_mac(self._device.device_id)}".lower()
+
+    @property
+    def state(self):
+        """state property"""
+        self._state = self._device.bssid
+        return self._state
+
+    @property
+    def name(self):
+        """ Entity name """
+        return f"{self._name} Wifi access point BSSID"
+
+    @property
+    def icon(self):
+        """icon getter"""
+        return "mdi:access-point"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return the device info."""
+        return self._device.device_info
 
     @property
     def entity_category(self):
