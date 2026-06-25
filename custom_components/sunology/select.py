@@ -47,10 +47,10 @@ async def async_setup_entry(hass, config_entry, async_add_entities): # pylint: d
                 coordinator = coordinated_device['coordinator']
                 new_entities = []
                 if isinstance(device, Gateway):
-                    new_entities.append(SunologFlowWorkingModeSelectEntity(device, hass))
+                    new_entities.append(SunologyFlowWorkingModeSelectEntity(device, hass))
                 
                 if isinstance(device, SmartOutlet):
-                    new_entities.append(SunologFlowNodeModeSelectEntity(device,hass))
+                    new_entities.append(SunologyFlowNodeModeSelectEntity(device, hass))
 
                 if not 'device_entities' in coordinated_device: 
                     coordinated_device['device_entities'] = []
@@ -60,11 +60,11 @@ async def async_setup_entry(hass, config_entry, async_add_entities): # pylint: d
     _check_device()
     return True
 
-class SunologFlowWorkingModeSelectEntity(SelectEntity):
-    """Represent a pvpower of a  device."""
+class SunologyFlowWorkingModeSelectEntity(SelectEntity):
+    """Represent a flow working mode of a Gateway device."""
 
     def __init__(self, device:SunologyAbstractDevice, hass):
-        """Set up SunologPvPowerSensor entity."""
+        """Set up SunologyFlowWorkingModeSelectEntity for Gateway device."""
         
         self._device = device
         self._name = device.name
@@ -114,7 +114,7 @@ class SunologFlowWorkingModeSelectEntity(SelectEntity):
 
     @property
     def name(self):
-        """ pvP name """
+        """Return the name of the entity."""
         return f"{self._name} flow working mode"
 
     @property
@@ -127,11 +127,11 @@ class SunologFlowWorkingModeSelectEntity(SelectEntity):
         """Return the device info."""
         return self._device.device_info
 
-class SunologFlowNodeModeSelectEntity(SelectEntity):
-    """Represent a pvpower of a  device."""
+class SunologyFlowNodeModeSelectEntity(SelectEntity):
+    """Represent a flow node mode of a SmartOutlet device."""
 
     def __init__(self, device:SunologyAbstractDevice, hass):
-        """Set up SunologFlowNodeModeSensor entity."""
+        """Set up SunologyFlowNodeModeSelectEntity for SmartOutlet device."""
         
         self._device = device
         self._name = device.name
@@ -176,12 +176,12 @@ class SunologFlowNodeModeSelectEntity(SelectEntity):
 
     async def async_select_option(self, option: str) -> None:
         """Change the selected option."""
-        self._state = self._device.flow_working_mode = option
-        await self._device._set_flowWorkingMode(option)
+        self._state = option
+        await self._device._set_flowNodeMode(option)
 
     @property
     def name(self):
-        """ pvP name """
+        """Return the name of the entity."""
         return f"{self._name} flow node mode"
 
     @property

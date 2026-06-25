@@ -301,6 +301,19 @@ class SunologyContext:
     async def send_setFlowWorkingMode(self, value: FlowWorkingModes):
         """Send set_flowWorkingMode command """
         await self.socket.send_hub_command({"flowConfig": {"flowWorkingMode": value }})
+    
+    async def send_setFlowNodeMode(self, device_id: str, mode: str):
+        """Send set_flowNodeMode command for a device"""
+        await self.socket.send_hub_command({
+            "deviceConfig": {
+                "id": device_id,
+                "features": {
+                    "flowNode": {
+                        "mode": mode
+                    }
+                }
+            }
+        })
 
 
     def process_new_device(self, product_data):
@@ -355,7 +368,11 @@ class SunologyContext:
                         for hub_device in product_data['devices']:
                             new_devices.extend(self.process_new_device(hub_device))
                 case "STREAM_OUTLET":
-                    new_devices.append(SmartOutlet(product_data))
+                    # Create a callback that captures the device_id for flow node mode changes
+                    device_id = product_data['id']
+                    async def set_flowNodeMode_callback(mode: str, captured_id=device_id):
+                        await self.send_setFlowNodeMode(captured_id, mode)
+                    new_devices.append(SmartOutlet(product_data, set_flowNodeMode_callback))
                 case "STOREY":
                     master = StoreyMaster(product_data)
                     products_valid=True

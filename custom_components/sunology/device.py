@@ -810,7 +810,7 @@ class SmartMeter_IndexesErl():
 class SmartOutlet(SunologyAbstractDevice):
     """Home Assistant representation of a Sunology device Smart."""
 
-    def __init__(self, raw_device):
+    def __init__(self, raw_device, set_flowNodeMode_callback: Callable[[str], None] = None):
         """Initialize Pulse device."""
         super().__init__(raw_device)
 
@@ -822,6 +822,8 @@ class SmartOutlet(SunologyAbstractDevice):
         self._features = SmartMeter_ElectricalDataFeatures()
         if 'features' in raw_device.keys():
             self._features.update_electrical_data_feature(raw_device['features'])
+        
+        self._set_flowNodeMode_callback = set_flowNodeMode_callback
 
     @property
     def state(self):
@@ -863,6 +865,13 @@ class SmartOutlet(SunologyAbstractDevice):
             self._state = raw_onOff_event['onOff']
         if "electricalData" in raw_onOff_event.keys():
             self.electrical_data[SmartMeterPhase.ALL].update_electrical_data(raw_onOff_event['electricalData'])
+
+    async def _set_flowNodeMode(self, mode: str):
+        """Set the flow node mode of the device."""
+        if self._set_flowNodeMode_callback is None:
+            _LOGGER.error("No callback set for _set_flowNodeMode")
+            return
+        await self._set_flowNodeMode_callback(mode)
 
     def __str__(self) -> str:
         """Get string representation."""
