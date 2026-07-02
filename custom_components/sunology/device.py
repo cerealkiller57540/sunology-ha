@@ -312,6 +312,68 @@ class PLAY(SunologyAbstractDevice, SolarEventInterface):
         """Get string representation."""
         return f"Sunology Device: {self.name}::{self.model_name}::{self.unique_id}"
 
+class CITY(SunologyAbstractDevice, SolarEventInterface):
+    """Home Assistant representation of a Sunology device CITY."""
+
+    def __init__(self, raw_play):
+        """Initialize CITY device."""
+        super().__init__(raw_play)
+        SolarEventInterface.__init__(self, raw_play)
+        self._pvP = None
+        self._miP = None
+
+    @property
+    def suggested_area(self) -> str:
+        """Get the suggested_area."""
+        return "Garden"
+        
+    @property
+    def model_name(self) -> str:
+        """Get the model name."""
+        return "CITY"
+    
+    @property
+    def device_info(self):
+        dev_info = super().device_info
+        return dev_info
+
+
+    def __str__(self) -> str:
+        """Get string representation."""
+        return f"Sunology Device: {self.name}::{self.model_name}::{self.unique_id}"
+
+class HOMEInverter(SunologyAbstractDevice, SolarEventInterface):
+    """Home Assistant representation of a Sunology device PLAY."""
+
+    def __init__(self, raw_play):
+        """Initialize Home solar inverter device."""
+        super().__init__(raw_play)
+        SolarEventInterface.__init__(self, raw_play)
+        self._pvP = None
+        self._miP = None
+        self._acVoltage = None
+
+
+    @property
+    def suggested_area(self) -> str:
+        """Get the suggested_area."""
+        return "Garden"
+        
+    @property
+    def model_name(self) -> str:
+        """Get the model name."""
+        return "HOME Solar"
+    
+    @property
+    def device_info(self):
+        dev_info = super().device_info
+        return dev_info
+
+
+    def __str__(self) -> str:
+        """Get string representation."""
+        return f"Sunology Device: {self.name}::{self.model_name}::{self.unique_id}"
+
 class StoreyMaster(SunologyAbstractDevice, BatteryPackInterface, BatteryEventInterface):
     """Home Assistant representation of a Sunology device PLAY."""
 

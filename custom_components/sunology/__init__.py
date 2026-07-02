@@ -39,7 +39,9 @@ from .device import (
     BatteryEventInterface,
     SmartMeter_3P,
     SmartOutlet,
-    LinkyTransmitter
+    LinkyTransmitter,
+    CITY,
+    HOMEInverter
 )
 
 from .const import (
@@ -360,8 +362,12 @@ class SunologyContext:
             match product_data['productName']:
                 case "PLAY_MAX":
                     new_devices.append(PLAYMax(product_data))
-                case "PLAY":
+                case "PLAY" | "PLAY2":
                     new_devices.append(PLAY(product_data))
+                case "CITY":
+                    new_devices.append(CITY(product_data))
+                case "HOME_PV":
+                    new_devices.append(HOMEInverter(product_data))
                 case "STREAM_CONNECT":
                     new_devices.append(Gateway(product_data, self.send_openNetwork, self.send_setFlowWorkingMode))
                     if "devices" in product_data.keys():
