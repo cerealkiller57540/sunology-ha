@@ -16,6 +16,9 @@ from homeassistant.helpers.update_coordinator import (
 from .const import SmartMeterPhase, SmartMeterTarifIndex, ElectricalDataFeature,  PACKAGE_NAME, DOMAIN as SUNOLOGY_DOMAIN
 from .device import (
     PLAYMax,
+    PLAY,
+    CITY,
+    HOMEInverter,
     Gateway,
     StoreyMaster,
     StoreyPack,
@@ -24,7 +27,8 @@ from .device import (
     BatteryEventInterface,
     SmartMeter_3P,
     LinkyTransmitter,
-    SmartOutlet
+    SmartOutlet,
+    MpptInterface
 )
 
 _LOGGER = logging.getLogger(PACKAGE_NAME) 
@@ -63,7 +67,13 @@ async def async_setup_entry(hass, config_entry, async_add_entities): # pylint: d
                 if isinstance(device, SolarEventInterface):
                     new_entities.append(SunologPvPowerSensorEntity(device, hass))
                     new_entities.append(SunologMiPowerSensorEntity(device, hass))
-
+                    
+                    if device.mppts_data:
+                        for mppt_index, mppt in device.mppts_data.items():
+                            new_entities.append(SunologyMpptPowerSensorEntity(device, mppt_index, hass))
+                            new_entities.append(SunologyMpptCurrentSensorEntity(device, mppt_index, hass))
+                            new_entities.append(SunologyMpptVoltageSensorEntity(device, mppt_index, hass))
+                            new_entities.append(SunologyMpptEnergySensorEntity(device, mppt_index, hass))
                 if isinstance(device, BatteryEventInterface):
                     new_entities.append(SunologyBatteryPowerSensorEntity(device, hass))
                     new_entities.append(SunologyBatterySocSensorEntity(device, hass))
@@ -282,6 +292,299 @@ class SunologMiPowerSensorEntity(SensorEntity):
     def should_poll(self) -> bool:
         """No need to poll. Coordinator notifies entity of updates."""
         return False
+
+
+class SunologyMpptPowerSensorEntity(SensorEntity):
+    """Represent a MPPT power sensor."""
+
+    def __init__(self, device:SunologyAbstractDevice, mppt_index, hass):
+        """Set up MPPT power sensor entity."""
+        self._device = device
+        self._mppt_index = mppt_index
+        self._name = device.name
+        self._unit_of_measurement = "W"
+        self.entity_id = f"{ENTITY_ID_FORMAT.format(f'mppt_{mppt_index}_power')}_{_format_devid_mac(device.device_id)}".lower()
+        self._state = None
+        self._hass = hass
+
+    @property
+    def entity_category(self):
+        return EntityCategory.DIAGNOSTIC
+
+    @property
+    def hass(self):
+        return self._hass
+
+    @hass.setter
+    def hass(self, hass):
+        pass
+
+    @property
+    def unique_id(self):
+        """Return the unique ID."""
+        return f"mppt_{self._mppt_index}_power_{_format_devid_mac(self._device.device_id)}".lower()
+
+    @property
+    def state(self):
+        """state property"""
+        if self._mppt_index in self._device.mppts_data:
+            self._state = self._device.mppts_data[self._mppt_index].power
+        return self._state
+
+    @property
+    def unit_of_measurement(self):
+        """unit of measurement property"""
+        return self._unit_of_measurement
+
+    @property
+    def name(self):
+        """Entity name"""
+        return f"{self._name} MPPT {self._mppt_index} Power"
+
+    @property
+    def icon(self):
+        """icon getter"""
+        return "mdi:solar-power-variant"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return the device info."""
+        return self._device.device_info
+    
+    @property
+    def device_class(self):
+        """Entity device_class"""
+        return SensorDeviceClass.POWER
+
+    @property
+    def state_class(self):
+        """Entity state_class"""
+        return SensorStateClass.MEASUREMENT
+
+    @property
+    def should_poll(self) -> bool:
+        """No need to poll. Coordinator notifies entity of updates."""
+        return False
+
+
+class SunologyMpptCurrentSensorEntity(SensorEntity):
+    """Represent a MPPT current sensor."""
+
+    def __init__(self, device:SunologyAbstractDevice, mppt_index, hass):
+        """Set up MPPT current sensor entity."""
+        self._device = device
+        self._mppt_index = mppt_index
+        self._name = device.name
+        self._unit_of_measurement = "A"
+        self.entity_id = f"{ENTITY_ID_FORMAT.format(f'mppt_{mppt_index}_current')}_{_format_devid_mac(device.device_id)}".lower()
+        self._state = None
+        self._hass = hass
+
+    @property
+    def entity_category(self):
+        return EntityCategory.DIAGNOSTIC
+
+    @property
+    def hass(self):
+        return self._hass
+
+    @hass.setter
+    def hass(self, hass):
+        pass
+
+    @property
+    def unique_id(self):
+        """Return the unique ID."""
+        return f"mppt_{self._mppt_index}_current_{_format_devid_mac(self._device.device_id)}".lower()
+
+    @property
+    def state(self):
+        """state property"""
+        if self._mppt_index in self._device.mppts_data:
+            self._state = self._device.mppts_data[self._mppt_index].current
+        return self._state
+
+    @property
+    def unit_of_measurement(self):
+        """unit of measurement property"""
+        return self._unit_of_measurement
+
+    @property
+    def name(self):
+        """Entity name"""
+        return f"{self._name} MPPT {self._mppt_index} Current"
+
+    @property
+    def icon(self):
+        """icon getter"""
+        return "mdi:current-dc"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return the device info."""
+        return self._device.device_info
+    
+    @property
+    def device_class(self):
+        """Entity device_class"""
+        return SensorDeviceClass.CURRENT
+
+    @property
+    def state_class(self):
+        """Entity state_class"""
+        return SensorStateClass.MEASUREMENT
+
+    @property
+    def should_poll(self) -> bool:
+        """No need to poll. Coordinator notifies entity of updates."""
+        return False
+
+
+class SunologyMpptVoltageSensorEntity(SensorEntity):
+    """Represent a MPPT voltage sensor."""
+
+    def __init__(self, device:SunologyAbstractDevice, mppt_index, hass):
+        """Set up MPPT voltage sensor entity."""
+        self._device = device
+        self._mppt_index = mppt_index
+        self._name = device.name
+        self._unit_of_measurement = "V"
+        self.entity_id = f"{ENTITY_ID_FORMAT.format(f'mppt_{mppt_index}_voltage')}_{_format_devid_mac(device.device_id)}".lower()
+        self._state = None
+        self._hass = hass
+
+    @property
+    def entity_category(self):
+        return EntityCategory.DIAGNOSTIC
+
+    @property
+    def hass(self):
+        return self._hass
+
+    @hass.setter
+    def hass(self, hass):
+        pass
+
+    @property
+    def unique_id(self):
+        """Return the unique ID."""
+        return f"mppt_{self._mppt_index}_voltage_{_format_devid_mac(self._device.device_id)}".lower()
+
+    @property
+    def state(self):
+        """state property"""
+        if self._mppt_index in self._device.mppts_data:
+            self._state = self._device.mppts_data[self._mppt_index].voltage
+        return self._state
+
+    @property
+    def unit_of_measurement(self):
+        """unit of measurement property"""
+        return self._unit_of_measurement
+
+    @property
+    def name(self):
+        """Entity name"""
+        return f"{self._name} MPPT {self._mppt_index} Voltage"
+
+    @property
+    def icon(self):
+        """icon getter"""
+        return "mdi:sine-wave"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return the device info."""
+        return self._device.device_info
+    
+    @property
+    def device_class(self):
+        """Entity device_class"""
+        return SensorDeviceClass.VOLTAGE
+
+    @property
+    def state_class(self):
+        """Entity state_class"""
+        return SensorStateClass.MEASUREMENT
+
+    @property
+    def should_poll(self) -> bool:
+        """No need to poll. Coordinator notifies entity of updates."""
+        return False
+
+
+class SunologyMpptEnergySensorEntity(SensorEntity):
+    """Represent a MPPT energy sensor."""
+
+    def __init__(self, device:SunologyAbstractDevice, mppt_index, hass):
+        """Set up MPPT energy sensor entity."""
+        self._device = device
+        self._mppt_index = mppt_index
+        self._name = device.name
+        self._unit_of_measurement = "Wh"
+        self.entity_id = f"{ENTITY_ID_FORMAT.format(f'mppt_{mppt_index}_energy')}_{_format_devid_mac(device.device_id)}".lower()
+        self._state = None
+        self._hass = hass
+
+    @property
+    def entity_category(self):
+        return EntityCategory.DIAGNOSTIC
+
+    @property
+    def hass(self):
+        return self._hass
+
+    @hass.setter
+    def hass(self, hass):
+        pass
+
+    @property
+    def unique_id(self):
+        """Return the unique ID."""
+        return f"mppt_{self._mppt_index}_energy_{_format_devid_mac(self._device.device_id)}".lower()
+
+    @property
+    def state(self):
+        """state property"""
+        if self._mppt_index in self._device.mppts_data:
+            self._state = self._device.mppts_data[self._mppt_index].prod_tot
+        return self._state
+
+    @property
+    def unit_of_measurement(self):
+        """unit of measurement property"""
+        return self._unit_of_measurement
+
+    @property
+    def name(self):
+        """Entity name"""
+        return f"{self._name} MPPT {self._mppt_index} Energy"
+
+    @property
+    def icon(self):
+        """icon getter"""
+        return "mdi:lightning-bolt"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return the device info."""
+        return self._device.device_info
+    
+    @property
+    def device_class(self):
+        """Entity device_class"""
+        return SensorDeviceClass.ENERGY
+
+    @property
+    def state_class(self):
+        """Entity state_class"""
+        return SensorStateClass.TOTAL_INCREASING
+
+    @property
+    def should_poll(self) -> bool:
+        """No need to poll. Coordinator notifies entity of updates."""
+        return False
+
 
 class SunologyBatteryPowerSensorEntity(SensorEntity):
     """Represent a mipower of a  device."""

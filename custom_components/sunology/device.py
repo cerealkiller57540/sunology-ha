@@ -151,9 +151,19 @@ class SolarEventInterface():
         """Return the miP value"""
         return self._miP
     
+    @property
+    def mppts_data(self):
+        """Return the mppts_data dictionary"""
+        return getattr(self, '_mppts_data', {})
+    
     def solar_event_update(self, data):
         self._miP = data['miP'] if 'miP' in data.keys() else _LOGGER.warning(f"Solar event receive without the required miP {data}")
         self._pvP = data['pvP'] if 'pvP' in data.keys() else _LOGGER.warning(f"Solar event receive without the required pvP {data}")
+        if 'mppts' in data.keys():
+            for mppt_data in data['mppts']:
+                mppt_index = mppt_data['mpptIndex']
+                if hasattr(self, "_mppts_data") and mppt_index in self._mppts_data:
+                    self._mppts_data[mppt_index].update_mppt_data(mppt_data)
 
 class BatteryPackInterface():
     """Sunology extra porperties for events."""
@@ -291,6 +301,9 @@ class PLAY(SunologyAbstractDevice, SolarEventInterface):
         SolarEventInterface.__init__(self, raw_play)
         self._pvP = None
         self._miP = None
+        self._mppts_data = {
+            0: MpptInterface()
+        }
 
     @property
     def suggested_area(self) -> str:
@@ -321,6 +334,9 @@ class CITY(SunologyAbstractDevice, SolarEventInterface):
         SolarEventInterface.__init__(self, raw_play)
         self._pvP = None
         self._miP = None
+        self._mppts_data = {
+            0: MpptInterface()
+        }
 
     @property
     def suggested_area(self) -> str:
@@ -352,6 +368,10 @@ class HOMEInverter(SunologyAbstractDevice, SolarEventInterface):
         self._pvP = None
         self._miP = None
         self._acVoltage = None
+        self._mppts_data = {
+            0:   MpptInterface(),
+            1:   MpptInterface()
+        }
 
 
     @property
@@ -548,6 +568,47 @@ class SmartMeter_ElectricalData():
             self._conso_tot = raw_electrical_data['consoTot']
         if 'prodTot' in raw_electrical_data.keys():
             self._prod_tot = raw_electrical_data['prodTot']
+
+class MpptInterface():
+    """Home Assistant representation of a Sunology MPPT property."""
+
+    def __init__(self, current=None, voltage=None, power=None, prod_tot=None):
+        """Initialize MPPT property."""
+        self._current = current
+        self._voltage = voltage
+        self._power = power
+        self._prod_tot = prod_tot
+
+    @property
+    def current(self):
+        """Get the current"""
+        return self._current
+
+    @property
+    def voltage(self):
+        """Get the voltage"""
+        return self._voltage
+
+    @property
+    def power(self):
+        """Get the power"""
+        return self._power
+
+    @property
+    def prod_tot(self):
+        """Get the prod_tot"""
+        return self._prod_tot
+    
+    def update_mppt_data(self, raw_mppt_data):
+        """Update MPPT data from raw event data."""
+        if 'pvI' in raw_mppt_data.keys():
+            self._current = raw_mppt_data['pvI']
+        if 'pvV' in raw_mppt_data.keys():
+            self._voltage = raw_mppt_data['pvV']
+        if 'pvP' in raw_mppt_data.keys():
+            self._power = raw_mppt_data['pvP']
+        if 'totalGen' in raw_mppt_data.keys():
+            self._prod_tot = raw_mppt_data['totalGen']
 
 
 class SmartMeter_ElectricalDataFeatures():
@@ -884,6 +945,8 @@ class SmartOutlet(SunologyAbstractDevice):
         self._features = SmartMeter_ElectricalDataFeatures()
         if 'features' in raw_device.keys():
             self._features.update_electrical_data_feature(raw_device['features'])
+            if "flowNode" in raw_device["features"].keys():
+                self._flowNodeConfig.update_flowNode(raw_device["features"]["flowNode"])
         
         self._set_flowNodeMode_callback = set_flowNodeMode_callback
 
@@ -939,6 +1002,16 @@ class SmartOutlet(SunologyAbstractDevice):
         """Get string representation."""
         return f"Sunology Device: {self.name}::{self.model_name}::{self.unique_id}"
 
+
+
+    def update_product(self, raw_event):
+        super().update_product(raw_event)
+        if "features" in raw_event.keys():
+            if "flowNode" in raw_event["features"].keys():
+                self._flowNodeConfig.update_flowNode(raw_event["features"]["flowNode"])
+            if self._features is None:
+                self._features = SmartMeter_ElectricalDataFeatures()
+            self._features.update_electrical_data_feature(raw_event["features"])
 
 class LinkyTransmitter(SunologyAbstractDevice):
     """Home Assistant representation of a Sunology device Smart."""
