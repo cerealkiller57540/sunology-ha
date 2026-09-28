@@ -18,6 +18,7 @@ class SunologyAbstractDevice():
         self._hw_version: str = raw_device['hwVersion'] if 'hwVersion' in raw_device.keys() else None
         self._device_entry_id = None
         self._parent_id: str = raw_device['parentId'] if 'parentId' in raw_device.keys() else None
+        self._via_device_id: str | None = None
         self._name: str = raw_device['name'] if 'name' in raw_device.keys() else f"{self.model_name} {self.device_id}"
         self._rssi: int = raw_device['rssi'] if 'rssi' in raw_device.keys() else raw_device['rssiWifi'] if 'rssiWifi' in raw_device.keys() else None
 
@@ -42,9 +43,9 @@ class SunologyAbstractDevice():
         return self._name
 
     @property
-    def via_device(self):
-        """Get the unique id."""
-        return (SUNOLOGY_DOMAIN, self._parent_id)
+    def parent_id(self) -> str | None:
+        """Get the Sunology id of the parent device, if any."""
+        return self._parent_id
 
     @property
     def sw_version(self) -> str:
@@ -100,13 +101,18 @@ class SunologyAbstractDevice():
             model=self.model_name,
             sw_version=self.sw_version,
             hw_version=self.hw_version,
-            via_device=self.via_device if self._parent_id is not None else None
         )
+        # Link to the parent by registry id, known once register() ran. HA rejects
+        # (does not add the entity) a via_device_id that is not a registered device,
+        # so it is only set when the parent was found in the registry.
+        if self._via_device_id is not None:
+            dev_info["via_device_id"] = self._via_device_id
         return dev_info
 
-    async def register(self, hass, entry) -> DeviceEntry :
-        device_registry_instance = dr.async_get(hass)
-        device_entry = await device_registry_instance.async_get_or_create(
+    def register(self, device_registry: dr.DeviceRegistry, entry, via_device_id: str | None) -> DeviceEntry:
+        """Register the device in the device registry, linked to its parent device id."""
+        self._via_device_id = via_device_id
+        device_entry = device_registry.async_get_or_create(
             config_entry_id=entry.entry_id,
             **self.device_info
         )

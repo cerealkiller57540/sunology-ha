@@ -150,9 +150,9 @@ class SunologySocket():
                     except ConnectionClosed:
                         await asyncio.sleep(end_timeout)
                         _LOGGER.info(f"Connection closed")
-                    except e:
+                    except Exception as e:  # pylint: disable=broad-exception-caught
                         await asyncio.sleep(end_timeout)
-                        _LOGGER.warn(f"unhandled excepiton {e}")
+                        _LOGGER.warning("Unhandled exception on socket: %s", e)
             else:
                 _LOGGER.debug('Unauth connection')
                 async with connect(f"ws://{lan_host_ip}:{lan_port}/{basepath}") as websocket :
@@ -165,9 +165,9 @@ class SunologySocket():
                     except ConnectionClosed:
                         await asyncio.sleep(end_timeout)
                         _LOGGER.debug(f"Connection closed")
-                    except e:
+                    except Exception as e:  # pylint: disable=broad-exception-caught
                         await asyncio.sleep(end_timeout)
-                        _LOGGER.warn(f"unhandled excepiton {e}")
+                        _LOGGER.warning("Unhandled exception on socket: %s", e)
             self._connected = False
             self.on_disconnect()
 
