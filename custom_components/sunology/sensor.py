@@ -13,7 +13,7 @@ from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
 )
 
-from .const import SmartMeterPhase, SmartMeterTarifIndex, ElectricalDataFeature, ContactorMode,  PACKAGE_NAME, DOMAIN as SUNOLOGY_DOMAIN
+from .const import SmartMeterPhase, SmartMeterTarifIndex, ElectricalDataFeature, ContactorMode, ContactorStatus,  PACKAGE_NAME, DOMAIN as SUNOLOGY_DOMAIN
 from .device import (
     PLAYMax,
     PLAY,
@@ -148,6 +148,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities): # pylint: d
                     new_entities.append(SunologyOnOffValueSensorEntity(device, hass, "target_power"))
 
                 if isinstance(device, LegrandContactor):
+                    new_entities.append(SunologyContactorStatusSensorEntity(device, hass))
                     new_entities.append(SunologyContactorModeSensorEntity(device, hass))
                     new_entities.append(SunologyOnOffValueSensorEntity(device, hass, "min_on_time"))
                     new_entities.append(SunologyOnOffValueSensorEntity(device, hass, "runtime_min"))
@@ -1667,6 +1668,84 @@ class SunologyElectricalDataSensorEntity_ApparentPower(SensorEntity):
         """ Entity state_class """
         return SensorStateClass.MEASUREMENT
 
+class SunologyContactorStatusSensorEntity(SensorEntity):
+    """Represent the TAP status as the STREAM app shows it."""
+
+    _attr_translation_key = "contactor_status"
+
+    def __init__(self, device:SunologyAbstractDevice, hass):
+        """Set up SunologyContactorStatusSensorEntity entity."""
+        self._device = device
+        self._name = device.name
+        self.entity_id = f"{ENTITY_ID_FORMAT.format("contactor_status")}_{_format_devid_mac(device.device_id)}".lower()# pylint: disable=C0301
+        self._state = None
+        self._hass = hass
+
+    @property
+    def entity_category(self):
+        return None
+
+    @property
+    def hass(self):
+        return self._hass
+
+    @hass.setter
+    def hass(self, hass):
+        pass
+
+    @property
+    def unique_id(self):
+        """Return the unique ID."""
+        return f"contactor_status_{_format_devid_mac(self._device.device_id)}".lower()
+
+    @property
+    def state(self):
+        """state property"""
+        status = self._device.status
+        self._state = status.value if status is not None else None
+        return self._state
+
+    @property
+    def options(self):
+        """options list property"""
+        return [e.value for e in ContactorStatus]
+
+    @property
+    def extra_state_attributes(self):
+        """Raw values the status is computed from."""
+        mode = self._device.contactor_mode
+        try:
+            mode_name = ContactorMode(mode).name if mode is not None else None
+        except ValueError:
+            mode_name = None
+        return {
+            "contactor_mode": mode_name,
+            "contactor_mode_code": mode,
+            "relay_on": self._device.state,
+            "flow_node_mode": self._device.flowNodeConfig.mode,
+            "target_power": self._device.target_power,
+        }
+
+    @property
+    def name(self):
+        """ Entity name """
+        return f"{self._name} status"
+
+    @property
+    def icon(self):
+        """icon getter"""
+        return "mdi:water-boiler"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return the device info."""
+        return self._device.device_info
+
+    @property
+    def device_class(self):
+        """ Entity device_class """
+        return SensorDeviceClass.ENUM
+
 class SunologyContactorModeSensorEntity(SensorEntity):
     """Represent the mode reported by a Legrand contactor (TAP)."""
 
@@ -1681,7 +1760,13 @@ class SunologyContactorModeSensorEntity(SensorEntity):
 
     @property
     def entity_category(self):
-        return None
+        # Raw firmware value; the user-facing value is SunologyContactorStatusSensorEntity.
+        return EntityCategory.DIAGNOSTIC
+
+    @property
+    def extra_state_attributes(self):
+        """Raw numeric code, as sent on the LAN WebSocket."""
+        return {"code": self._device.contactor_mode}
 
     @property
     def hass(self):

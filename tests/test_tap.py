@@ -104,6 +104,7 @@ async def test_tap_device_and_entities(hass):
         f"relaystate_{tid}", f"contactor_mode_{tid}", f"apparent_power_all_{tid}",
         f"flownodemode_{tid}", f"runtime_on_{tid}", f"target_power_{tid}",
         f"min_on_time_{tid}", f"runtime_min_{tid}", f"max_cons_{tid}",
+        f"contactor_status_{tid}",
     }
     assert expected <= set(ents), sorted(ents)
     # No METERING cluster on the TAP: an energy counter would stay unknown forever.
@@ -117,6 +118,10 @@ async def test_tap_device_and_entities(hass):
     assert state(hass, ents, f"runtime_min_{tid}").state == "120"
     assert state(hass, ents, f"max_cons_{tid}").state == "2100"
 
+    # User-facing status is a primary entity, the raw firmware mode a diagnostic one.
+    assert ents[f"contactor_status_{tid}"].entity_category is None
+    assert ents[f"contactor_mode_{tid}"].entity_category == "diagnostic"
+
 
 async def test_tap_on_off_event(hass):
     _, ctx = await setup(hass)
@@ -129,6 +134,10 @@ async def test_tap_on_off_event(hass):
 
     assert state(hass, ents, f"relaystate_{tid}").state == "on"
     assert state(hass, ents, f"contactor_mode_{tid}").state == "ON"
+    status = state(hass, ents, f"contactor_status_{tid}")
+    assert status.state == "forced_on"
+    assert status.attributes["contactor_mode_code"] == 3
+    assert status.attributes["relay_on"] is True
     assert state(hass, ents, f"apparent_power_all_{tid}").state == "1490"
     assert state(hass, ents, f"runtime_on_{tid}").state == "42"
     assert state(hass, ents, f"target_power_{tid}").state == "2100"
@@ -138,6 +147,16 @@ async def test_tap_on_off_event(hass):
     await settle(hass, ctx)
     assert state(hass, ents, f"relaystate_{tid}").state == "off"
     assert state(hass, ents, f"contactor_mode_{tid}").state == "MANUAL"
+    # Same as the STREAM app: codes other than AUTO / ON have no status.
+    assert state(hass, ents, f"contactor_status_{tid}").state == "unknown"
+
+    # AUTO: the relay state tells ACTIVE from IDLE, as mapContactorModeCodeToContactorMode does.
+    ctx.socket.process(json.dumps(on_off(TAP_ID, "LEGRAND_CONTACTOR", True, 2, power=2000)))
+    await settle(hass, ctx)
+    assert state(hass, ents, f"contactor_status_{tid}").state == "active"
+    ctx.socket.process(json.dumps(on_off(TAP_ID, "LEGRAND_CONTACTOR", False, 2, power=0)))
+    await settle(hass, ctx)
+    assert state(hass, ents, f"contactor_status_{tid}").state == "idle"
 
 
 async def test_tap_select_sends_flow_node_mode(hass, no_hub_connection):

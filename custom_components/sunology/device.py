@@ -1,5 +1,5 @@
 """Home Assistant representation of an Sunology device."""
-from .const import SmartMeterPhase, SmartMeterTarifIndex, ElectricalDataFeature, FlowWorkingModes, FeatureFlowNodeModes, DOMAIN as SUNOLOGY_DOMAIN, PACKAGE_NAME
+from .const import SmartMeterPhase, SmartMeterTarifIndex, ElectricalDataFeature, FlowWorkingModes, FeatureFlowNodeModes, ContactorMode, ContactorStatus, DOMAIN as SUNOLOGY_DOMAIN, PACKAGE_NAME
 from homeassistant.helpers.device_registry import DeviceInfo, DeviceEntry
 from homeassistant.helpers import device_registry as dr
 from collections.abc import Callable
@@ -1100,6 +1100,17 @@ class LegrandContactor(OnOffDevice):
     def contactor_mode(self):
         """Get the contactor mode reported by the device."""
         return self._contactor_mode
+
+    @property
+    def status(self):
+        """STREAM app status, see ContactorStatus."""
+        if self._contactor_mode is None:
+            return None
+        if self._contactor_mode == ContactorMode.ON:
+            return ContactorStatus.FORCED_ON
+        if self._contactor_mode == ContactorMode.AUTO:
+            return ContactorStatus.ACTIVE if self._state else ContactorStatus.IDLE
+        return ContactorStatus.UNKNOWN
 
     def update_onOff_event(self, raw_onOff_event):
         super().update_onOff_event(raw_onOff_event)
