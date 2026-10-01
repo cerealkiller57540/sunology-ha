@@ -148,6 +148,9 @@ class SunologySocket():
         _LOGGER.debug('Socket not connected')
 
         try:
+            # end_timeout only bounds the handshake. It must never wrap the receive
+            # loop below: asyncio.timeout is a deadline on its whole block, so a
+            # healthy connection would be torn down after end_timeout seconds.
             async with asyncio.timeout(end_timeout):
                 if auth_token is not None:
                     _LOGGER.info('Auth connection')
@@ -169,22 +172,24 @@ class SunologySocket():
                         close_timeout=10
                     )
 
-                self._socket = websocket
-                self._connected = True
-                self.on_connect()
+            self._socket = websocket
+            self._connected = True
+            self.on_connect()
 
-                try:
-                    async for message in self._socket:
-                        self.process(message)
-                except ConnectionClosed:
-                    _LOGGER.info("Connection closed by server")
-                except asyncio.TimeoutError:
-                    _LOGGER.warning("Message receive timeout")
-                except Exception as e:
-                    _LOGGER.warning(f"Error receiving message: {e}")
+            # Lost links are detected by the websockets keepalive (ping_interval /
+            # ping_timeout), which closes the connection and ends this iteration.
+            try:
+                async for message in self._socket:
+                    self.process(message)
+            except ConnectionClosed:
+                _LOGGER.info("Connection closed by server")
+            except asyncio.TimeoutError:
+                _LOGGER.warning("Message receive timeout")
+            except Exception as e:
+                _LOGGER.warning(f"Error receiving message: {e}")
 
         except asyncio.TimeoutError:
-            _LOGGER.warning("Connection timeout - server unreachable")
+            _LOGGER.warning("Handshake timeout - server unreachable")
         except ConnectionClosed:
             _LOGGER.info("Connection closed during setup")
         except Exception as e:
