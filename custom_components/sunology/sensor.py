@@ -144,8 +144,14 @@ async def async_setup_entry(hass, config_entry, async_add_entities): # pylint: d
                     if device.has_energy_metering:
                         new_entities.append(SunologyTotalImportSensorEntity(device,  SmartMeterPhase.ALL, hass))
 
+                    new_entities.append(SunologyOnOffValueSensorEntity(device, hass, "runtime_on"))
+                    new_entities.append(SunologyOnOffValueSensorEntity(device, hass, "target_power"))
+
                 if isinstance(device, LegrandContactor):
                     new_entities.append(SunologyContactorModeSensorEntity(device, hass))
+                    new_entities.append(SunologyOnOffValueSensorEntity(device, hass, "min_on_time"))
+                    new_entities.append(SunologyOnOffValueSensorEntity(device, hass, "runtime_min"))
+                    new_entities.append(SunologyOnOffValueSensorEntity(device, hass, "max_cons"))
 
 
                 if isinstance(device, (Gateway)):
@@ -1731,6 +1737,89 @@ class SunologyContactorModeSensorEntity(SensorEntity):
     def device_class(self):
         """ Entity device_class """
         return SensorDeviceClass.ENUM
+
+# key -> (value getter, label, unit, device class, state class, icon, diagnostic)
+_ON_OFF_VALUES = {
+    "runtime_on": (lambda d: d.runtime_on, "runtime today", "min",
+                   SensorDeviceClass.DURATION, SensorStateClass.TOTAL_INCREASING, "mdi:timer-play-outline", False),
+    "target_power": (lambda d: d.target_power, "flow target power", "W",
+                     SensorDeviceClass.POWER, SensorStateClass.MEASUREMENT, "mdi:target", False),
+    # Flow node configuration, written by the STREAM app from the hot water tank
+    # capacity and power (backend_mobile ClientConsumptionDeviceService).
+    "min_on_time": (lambda d: d.flowNodeConfig.minOnTime, "forced on minimal duration", "s",
+                    SensorDeviceClass.DURATION, None, "mdi:timer-lock-outline", True),
+    "runtime_min": (lambda d: d.flowNodeConfig.runtimeMin, "daily minimal runtime", "min",
+                    SensorDeviceClass.DURATION, None, "mdi:timer-sand", True),
+    "max_cons": (lambda d: d.flowNodeConfig.maxCons, "driven load power", "W",
+                 SensorDeviceClass.POWER, None, "mdi:water-boiler", True),
+}
+
+class SunologyOnOffValueSensorEntity(SensorEntity):
+    """Represent a numeric value of an on/off device (Flow runtime, target, config)."""
+
+    def __init__(self, device:SunologyAbstractDevice, hass, key:str):
+        """Set up SunologyOnOffValueSensorEntity entity."""
+        self._device = device
+        self._name = device.name
+        self._key = key
+        (self._getter, self._label, self._unit_of_measurement, self._device_class,
+         self._state_class, self._icon, self._diagnostic) = _ON_OFF_VALUES[key]
+        self.entity_id = f"{ENTITY_ID_FORMAT.format(key)}_{_format_devid_mac(device.device_id)}".lower()# pylint: disable=C0301
+        self._state = None
+        self._hass = hass
+
+    @property
+    def entity_category(self):
+        return EntityCategory.DIAGNOSTIC if self._diagnostic else None
+
+    @property
+    def hass(self):
+        return self._hass
+
+    @hass.setter
+    def hass(self, hass):
+        pass
+
+    @property
+    def unique_id(self):
+        """Return the unique ID."""
+        return f"{self._key}_{_format_devid_mac(self._device.device_id)}".lower()
+
+    @property
+    def state(self):
+        """state property"""
+        self._state = self._getter(self._device)
+        return self._state
+
+    @property
+    def unit_of_measurement(self):
+        """unit of mesurment property"""
+        return self._unit_of_measurement
+
+    @property
+    def name(self):
+        """ Entity name """
+        return f"{self._name} {self._label}"
+
+    @property
+    def icon(self):
+        """icon getter"""
+        return self._icon
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return the device info."""
+        return self._device.device_info
+
+    @property
+    def device_class(self):
+        """ Entity device_class """
+        return self._device_class
+
+    @property
+    def state_class(self):
+        """ Entity state_class """
+        return self._state_class
 
 class SunologyElectricalDataSensorEntityFeature(SensorEntity):
     """Represent a mipower of a  device."""

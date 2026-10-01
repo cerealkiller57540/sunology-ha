@@ -949,6 +949,11 @@ class OnOffDevice(SunologyAbstractDevice):
             SmartMeterPhase.ALL: SmartMeter_ElectricalData()
         }
         self._state = None
+        # Sent by the hub on every onOffEvent of a device that is a Flow node
+        # (Device::attributesToCJson, fw-sconnect): minutes of runtime today and the
+        # power the Flow currently grants the device.
+        self._runtime_on = None
+        self._target_power = None
         self._flowNodeConfig = FlowDevice_FlowNodeConfig()
         self._features = SmartMeter_ElectricalDataFeatures()
         if 'features' in raw_device.keys():
@@ -962,6 +967,16 @@ class OnOffDevice(SunologyAbstractDevice):
     def state(self):
         """Get the state."""
         return self._state
+
+    @property
+    def runtime_on(self):
+        """Minutes the device has been on today, as counted by the Flow."""
+        return self._runtime_on
+
+    @property
+    def target_power(self):
+        """Power in W the Flow currently grants the device."""
+        return self._target_power
 
     @property
     def supported_flow_node_modes(self) -> List[str]:
@@ -996,6 +1011,10 @@ class OnOffDevice(SunologyAbstractDevice):
     def update_onOff_event(self, raw_onOff_event):
         if "onOff" in raw_onOff_event.keys():
             self._state = raw_onOff_event['onOff']
+        if "runtimeOn" in raw_onOff_event.keys():
+            self._runtime_on = raw_onOff_event['runtimeOn']
+        if "targetPower" in raw_onOff_event.keys():
+            self._target_power = raw_onOff_event['targetPower']
         if "electricalData" in raw_onOff_event.keys():
             self.electrical_data[SmartMeterPhase.ALL].update_electrical_data(raw_onOff_event['electricalData'])
 
