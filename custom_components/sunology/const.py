@@ -10,6 +10,11 @@ GATEWAY_DEFAULT_PORT = 20199
 
 MIN_UNTIL_REFRESH = 2
 
+# Reconnection backoff to the STREAM Connect, in seconds: first retry immediate,
+# then RECONNECT_BACKOFF_BASE doubled on each failed attempt, capped.
+RECONNECT_BACKOFF_BASE = 5
+RECONNECT_BACKOFF_MAX = 300
+
 PACKAGE_NAME = f"custom_components.{DOMAIN}"
 
 
@@ -53,6 +58,18 @@ class FeatureFlowNodeModes(StrEnum):
     FLOW = "FLOW"
     FORCED_ON = "FORCED_ON"
     FORCED_OFF = "FORCED_OFF"
+
+class ContactorStatus(StrEnum):
+    """User-facing TAP status, aligned on the STREAM app.
+
+    Mirrors web/apps/mobile mapContactorModeCodeToContactorMode + mapContactorModeToStatus:
+    the LAN WebSocket carries the raw contactorMode code only, so the app tells
+    FLOW_AUTO_ON from FLOW_AUTO_OFF with the relay state of the same event.
+    """
+    ACTIVE = "active"        # driven by the hub, relay closed
+    IDLE = "idle"            # driven by the hub, relay open
+    FORCED_ON = "forced_on"  # relay held closed on the client's request
+    UNKNOWN = "unknown"      # any other code (0 OFF, 1 MANUAL): the app shows it unknown
 
 class ContactorMode(IntEnum):
     """Mode reported by a Legrand contactor (TAP)."""

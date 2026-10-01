@@ -212,4 +212,5 @@ class SunologySocket():
                 await self._socket.close()
             except Exception:
                 _LOGGER.debug("Error closing socket", exc_info=True)
-        self.on_disconnect()
+        # No on_disconnect() here: closing the socket ends the receive loop of
+        # connect(), whose finally block reports the disconnection exactly once.

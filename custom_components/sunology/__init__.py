@@ -50,6 +50,8 @@ from .const import (
     CONF_GATEWAY_HOST,
     CONF_GATEWAY_PORT,
     MIN_UNTIL_REFRESH,
+    RECONNECT_BACKOFF_BASE,
+    RECONNECT_BACKOFF_MAX,
     DOMAIN,
     PACKAGE_NAME,
     FlowWorkingModes
@@ -84,12 +86,12 @@ async def async_setup_entry(hass, entry: SunologyConfigEntry):
 
 async def async_unload_entry(hass, entry: SunologyConfigEntry):
     """Unload an Sunology config entry."""
-    unload_ok = True
-    # unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)   
     context = entry.runtime_data
+    # Stop reconnecting first: closing the socket below ends the receive loop,
+    # which reports a disconnection that must not schedule a new connection.
     context.unload()
-    await context.socket.disconnect() # Disconnect only if all devices is disabled
-    return unload_ok
+    await context.socket.disconnect()
+    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
 
 async def async_remove_config_entry_device(hass, config_entry: SunologyConfigEntry, device_entry) -> bool:
@@ -120,6 +122,10 @@ class SunologyContext:
         self._connection_atempt = 0
         self._previous_refresh = math.floor(time.time()/60)
         self._coroutines_future = []
+        # Single connection driver: at most one connect attempt alive at a time,
+        # whoever asks for it (disconnect callback or periodic refresh).
+        self._connect_future = None
+        self._unloading = False
 
     @property
     def hass(self):
@@ -147,14 +153,42 @@ class SunologyContext:
         self._sunology_devices = devices
     
     def unload(self):
-        """ hass """
+        """ Stop every pending task and never reconnect again. """
+        self._unloading = True
         for future in self._coroutines_future:
             future.cancel()
         self._coroutines_future = []
+        if self._connect_future is not None:
+            self._connect_future.cancel()
+            self._connect_future = None
+
+    def _reconnect_delay(self) -> float:
+        """Backoff before the next attempt: immediate first, then doubling, capped."""
+        if self._connection_atempt == 0:
+            return 0
+        return min(RECONNECT_BACKOFF_BASE * 2 ** (self._connection_atempt - 1), RECONNECT_BACKOFF_MAX)
+
+    def _schedule_connect(self):
+        """Schedule a connection attempt unless one is pending or the entry is unloading."""
+        if self._unloading:
+            _LOGGER.debug("Entry unloading, no reconnection")
+            return
+        if self._connect_future is not None and not self._connect_future.done():
+            _LOGGER.debug("Connection attempt already pending")
+            return
+        delay = self._reconnect_delay()
+        _LOGGER.info("Sunology socket connection in %ss (attempt %s)", delay, self._connection_atempt)
+        self._connection_atempt += 1
+        self._connect_future = asyncio.run_coroutine_threadsafe(
+            self._async_connect(self.socket, self.gateway_host, self.gateway_port, None, delay),
+            self._hass.loop,
+        )
 
 
-    async def _async_connect(self, socket, host, port, token):
+    async def _async_connect(self, socket, host, port, token, delay=0):
         """connect to Sunology socket"""
+        if delay:
+            await asyncio.sleep(delay)
         _LOGGER.info("Sunology socket connection")
         host_ip = host
         if host.endswith('.local') or host.endswith('.local.'):
@@ -190,10 +224,7 @@ class SunologyContext:
         socket.subscribe_on_disconnect(self.on_disconnect_callback)
 
         self._socket = socket
-
-        self._coroutines_future.append(asyncio.run_coroutine_threadsafe(
-            self._async_connect(socket, self.gateway_host, self.gateway_port, None), self._hass.loop
-        ))
+        self._schedule_connect()
 
     async def get_device(self, device_id):
         """ here we return last device by id"""
@@ -264,10 +295,7 @@ class SunologyContext:
         epoch_min = math.floor(time.time()/60)
         if not self.socket.is_connected:
             _LOGGER.info("Socket not connected detected, atempt: %s", self._connection_atempt)
-            self._coroutines_future.append(asyncio.run_coroutine_threadsafe(
-                self._async_connect(self.socket, self.gateway_host, self.gateway_port, None), self._hass.loop
-            ))
-            self._connection_atempt+=1
+            self._schedule_connect()
 
         if epoch_min != self._previous_refresh:
             self._previous_refresh =  epoch_min
@@ -547,7 +575,7 @@ class SunologyContext:
     def on_disconnect_callback(self):
         """on gridEvent callback"""
         _LOGGER.info("On disconnect received %s", self._connection_atempt)
-        self._coroutines_future.append(asyncio.run_coroutine_threadsafe(
-            self._async_connect(self.socket, self.gateway_host, self.gateway_port, None), self._hass.loop
-        ))
-        self._connection_atempt+=1
+        # Called from the finally block of the very connection task that is ending:
+        # it no longer counts as a pending attempt.
+        self._connect_future = None
+        self._schedule_connect()
