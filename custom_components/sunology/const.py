@@ -1,5 +1,5 @@
 """ Sunology const file """
-from enum import StrEnum
+from enum import IntEnum, StrEnum
 
 DOMAIN = "sunology"
 
@@ -51,5 +51,12 @@ class FlowWorkingModes(StrEnum):
 class FeatureFlowNodeModes(StrEnum):
     """Phase of a smart meter."""
     FLOW = "FLOW"
-    FORCED_ON = "FORCED_ON"    
+    FORCED_ON = "FORCED_ON"
     FORCED_OFF = "FORCED_OFF"
+
+class ContactorMode(IntEnum):
+    """Mode reported by a Legrand contactor (TAP)."""
+    OFF = 0
+    MANUAL = 1
+    AUTO = 2
+    ON = 3

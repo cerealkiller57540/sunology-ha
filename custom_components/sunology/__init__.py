@@ -38,7 +38,9 @@ from .device import (
     SolarEventInterface,
     BatteryEventInterface,
     SmartMeter_3P,
+    OnOffDevice,
     SmartOutlet,
+    LegrandContactor,
     LinkyTransmitter,
     CITY,
     HOMEInverter
@@ -55,7 +57,7 @@ from .const import (
 
 _LOGGER = logging.getLogger(PACKAGE_NAME)
 
-PLATFORMS = [Platform.SENSOR, Platform.SWITCH, Platform.SELECT]
+PLATFORMS = [Platform.SENSOR, Platform.SWITCH, Platform.SELECT, Platform.BINARY_SENSOR]
 
 
 async def async_setup_entry(hass, entry: SunologyConfigEntry):
@@ -379,6 +381,12 @@ class SunologyContext:
                     async def set_flowNodeMode_callback(mode: str, captured_id=device_id):
                         await self.send_setFlowNodeMode(captured_id, mode)
                     new_devices.append(SmartOutlet(product_data, set_flowNodeMode_callback))
+                case "LEGRAND_CONTACTOR":
+                    # Sunology TAP, the Legrand day/night contactor
+                    device_id = product_data['id']
+                    async def set_flowNodeMode_callback(mode: str, captured_id=device_id):
+                        await self.send_setFlowNodeMode(captured_id, mode)
+                    new_devices.append(LegrandContactor(product_data, set_flowNodeMode_callback))
                 case "STOREY":
                     master = StoreyMaster(product_data)
                     products_valid=True
@@ -516,14 +524,14 @@ class SunologyContext:
             device = coordinated_device['device']
             coordinator = coordinated_device['coordinator']
             if device.device_id == data['id']:
-                if isinstance(device, (SmartOutlet)):
+                if isinstance(device, (OnOffDevice)):
                     device.update_onOff_event(data)
                     if 'device_entities' in coordinated_device.keys():
                         for entity in coordinated_device['device_entities']:
                             _LOGGER.debug('Update entity %s', entity.entity_id)
                             entity.schedule_update_ha_state(force_refresh=False)
                 else:
-                    _LOGGER.info("OnOff event receive on non grid meter device")
+                    _LOGGER.info("OnOff event receive on non on/off device")
                 event_data = {
                     "device_id": device.unique_id,
                     "device_name": device.name,

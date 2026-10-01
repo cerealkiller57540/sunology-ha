@@ -1,5 +1,5 @@
 """Home Assistant representation of an Sunology device."""
-from .const import SmartMeterPhase, SmartMeterTarifIndex, ElectricalDataFeature, FlowWorkingModes, DOMAIN as SUNOLOGY_DOMAIN, PACKAGE_NAME
+from .const import SmartMeterPhase, SmartMeterTarifIndex, ElectricalDataFeature, FlowWorkingModes, FeatureFlowNodeModes, DOMAIN as SUNOLOGY_DOMAIN, PACKAGE_NAME
 from homeassistant.helpers.device_registry import DeviceInfo, DeviceEntry
 from homeassistant.helpers import device_registry as dr
 from collections.abc import Callable
@@ -516,12 +516,13 @@ class PLAYMax(SunologyAbstractDevice, SolarEventInterface, BatteryEventInterface
 class SmartMeter_ElectricalData():
     """Home Assistant representation of a Sunology SmartMeter_electrical_data property."""
 
-    def __init__(self, current=None, voltage=None, power_factor=None, power=None, conso_tot=None, prod_tot=None):
+    def __init__(self, current=None, voltage=None, power_factor=None, power=None, apparent_power=None, conso_tot=None, prod_tot=None):
         """Initialize SmartMeter_electrical_data property."""
         self._current = current
         self._voltage = voltage
         self._power_factor = power_factor
         self._power = power
+        self._apparent_power = apparent_power
         self._conso_tot = conso_tot
         self._prod_tot = prod_tot
 
@@ -546,6 +547,11 @@ class SmartMeter_ElectricalData():
         return self._power
 
     @property
+    def apparent_power(self):
+        """Get the apparent_power"""
+        return self._apparent_power
+
+    @property
     def conso_tot(self):
         """Get the conso_tot"""
         return self._conso_tot
@@ -554,7 +560,7 @@ class SmartMeter_ElectricalData():
     def prod_tot(self):
         """Get the prod_tot"""
         return self._prod_tot
-    
+
     def update_electrical_data(self, raw_electrical_data):
         if 'current' in raw_electrical_data.keys():
             self._current = raw_electrical_data['current']
@@ -564,6 +570,8 @@ class SmartMeter_ElectricalData():
             self._power_factor = raw_electrical_data['powerFactor']
         if 'power' in raw_electrical_data.keys():
             self._power = raw_electrical_data['power']
+        if 'apparentPower' in raw_electrical_data.keys():
+            self._apparent_power = raw_electrical_data['apparentPower']
         if 'consoTot' in raw_electrical_data.keys():
             self._conso_tot = raw_electrical_data['consoTot']
         if 'prodTot' in raw_electrical_data.keys():
@@ -930,11 +938,11 @@ class SmartMeter_IndexesErl():
         if 'energyConsumed_Ix10' in raw_indexes_erl.keys():
             self._energy_consumed_indexed[SmartMeterTarifIndex.INDEX_10] = raw_indexes_erl['energyConsumedIdx10']
 
-class SmartOutlet(SunologyAbstractDevice):
-    """Home Assistant representation of a Sunology device Smart."""
+class OnOffDevice(SunologyAbstractDevice):
+    """Home Assistant representation of a Sunology on/off device driven by the Flow."""
 
     def __init__(self, raw_device, set_flowNodeMode_callback: Callable[[str], None] = None):
-        """Initialize Pulse device."""
+        """Initialize on/off device."""
         super().__init__(raw_device)
 
         self._electrical_data = {
@@ -947,7 +955,7 @@ class SmartOutlet(SunologyAbstractDevice):
             self._features.update_electrical_data_feature(raw_device['features'])
             if "flowNode" in raw_device["features"].keys():
                 self._flowNodeConfig.update_flowNode(raw_device["features"]["flowNode"])
-        
+
         self._set_flowNodeMode_callback = set_flowNodeMode_callback
 
     @property
@@ -956,15 +964,15 @@ class SmartOutlet(SunologyAbstractDevice):
         return self._state
 
     @property
-    def suggested_area(self) -> str:
-        """Get the suggested_area."""
-        return "Livingroom"
-        
+    def supported_flow_node_modes(self) -> List[str]:
+        """Get the flow node modes the hardware can actually honour."""
+        return [e.name for e in FeatureFlowNodeModes]
+
     @property
-    def model_name(self) -> str:
-        """Get the model name."""
-        return "Pulse"
-    
+    def has_energy_metering(self) -> bool:
+        """True when the device reports a cumulated energy counter."""
+        return True
+
     @property
     def device_info(self):
         dev_info = super().device_info
@@ -979,7 +987,7 @@ class SmartOutlet(SunologyAbstractDevice):
     def electrical_data(self):
         """Get the electrical_data"""
         return self._electrical_data
-    
+
     @property
     def features(self):
         """Get the features"""
@@ -1002,8 +1010,6 @@ class SmartOutlet(SunologyAbstractDevice):
         """Get string representation."""
         return f"Sunology Device: {self.name}::{self.model_name}::{self.unique_id}"
 
-
-
     def update_product(self, raw_event):
         super().update_product(raw_event)
         if "features" in raw_event.keys():
@@ -1012,6 +1018,74 @@ class SmartOutlet(SunologyAbstractDevice):
             if self._features is None:
                 self._features = SmartMeter_ElectricalDataFeatures()
             self._features.update_electrical_data_feature(raw_event["features"])
+
+class SmartOutlet(OnOffDevice):
+    """Home Assistant representation of a Sunology device Smart."""
+
+    @property
+    def suggested_area(self) -> str:
+        """Get the suggested_area."""
+        return "Livingroom"
+
+    @property
+    def model_name(self) -> str:
+        """Get the model name."""
+        return "Pulse"
+
+class LegrandContactor(OnOffDevice):
+    """Home Assistant representation of a Sunology TAP, the Legrand day/night contactor."""
+
+    def __init__(self, raw_device, set_flowNodeMode_callback: Callable[[str], None] = None):
+        """Initialize TAP device."""
+        super().__init__(raw_device, set_flowNodeMode_callback)
+        self._contactor_mode = None
+
+    @property
+    def suggested_area(self) -> str:
+        """Get the suggested_area."""
+        return "Livingroom"
+
+    @property
+    def model_name(self) -> str:
+        """Get the model name."""
+        return "TAP"
+
+    @property
+    def manufacturer(self) -> str:
+        """Get the manufacturer."""
+        # The hub reports manufacturerName "Sunology" for every device it relays,
+        # including this one. The TAP is a Legrand contactor, don't relay that error.
+        return "Legrand"
+
+    @property
+    def supported_flow_node_modes(self) -> List[str]:
+        """Get the flow node modes the hardware can actually honour.
+
+        ZIGBEE_INTERFACE_setPower() maps a zero target power to LEGRAND_MODE_AUTO, never
+        to LEGRAND_MODE_OFF: the firmware cannot open the contactor on request. Offering
+        FORCED_OFF would return the contactor to AUTO, so it would close again on the
+        off-peak contact. Only expose what the hardware honours.
+        """
+        return [FeatureFlowNodeModes.FLOW.name, FeatureFlowNodeModes.FORCED_ON.name]
+
+    @property
+    def has_energy_metering(self) -> bool:
+        """True when the device reports a cumulated energy counter.
+
+        The TAP binds ELECTRICAL_MEASUREMENT only, never METERING: it reports power but
+        no energy counter, ever.
+        """
+        return False
+
+    @property
+    def contactor_mode(self):
+        """Get the contactor mode reported by the device."""
+        return self._contactor_mode
+
+    def update_onOff_event(self, raw_onOff_event):
+        super().update_onOff_event(raw_onOff_event)
+        if "contactorMode" in raw_onOff_event.keys():
+            self._contactor_mode = raw_onOff_event['contactorMode']
 
 class LinkyTransmitter(SunologyAbstractDevice):
     """Home Assistant representation of a Sunology device Smart."""
