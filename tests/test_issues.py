@@ -48,18 +48,32 @@ async def test_just_paired_creates_the_device(hass):
     assert device is not None and device.model == "TAP"
 
 
-async def test_remove_stale_device(hass):
-    """#10: a device the hub no longer reports can be deleted; a live one cannot."""
+async def test_remove_device_10(hass):
+    """#10: a paired accessory can be deleted and does not come back with the next
+    productInfo; pairing it again brings it back. The STREAM Connect itself cannot."""
+    from custom_components.sunology import async_remove_config_entry_device
     entry, ctx = await setup(hass)
     devreg = dr.async_get(hass)
-    from custom_components.sunology import async_remove_config_entry_device
 
-    stale = devreg.async_get_or_create(config_entry_id=entry.entry_id,
-                                       identifiers={("sunology", "DEADBEEF0000")}, name="old")
-    assert await async_remove_config_entry_device(hass, entry, stale) is True
+    pulse = get_dev(hass, PULSE_ID)
+    assert await async_remove_config_entry_device(hass, entry, pulse) is True
+    devreg.async_remove_device(pulse.id)
+    await hass.async_block_till_done()
+    assert PULSE_ID in entry.options["ignored_devices"]
 
-    live = get_dev(hass, PULSE_ID)
-    assert await async_remove_config_entry_device(hass, entry, live) is False
+    ctx.socket.process(json.dumps(product_info()))
+    await settle(hass, ctx)
+    assert get_dev(hass, PULSE_ID) is None
+    assert all(d.device_id != PULSE_ID for d in ctx.sunology_devices)
+
+    pulse_info = next(d for d in product_info()["data"]["devices"] if d["id"] == PULSE_ID)
+    ctx.socket.process(json.dumps({"event": "justPaired", "data": pulse_info}))
+    await settle(hass, ctx)
+    assert get_dev(hass, PULSE_ID) is not None
+    assert PULSE_ID not in entry.options["ignored_devices"]
+
+    hub = get_dev(hass, HUB_ID)
+    assert await async_remove_config_entry_device(hass, entry, hub) is False
 
 
 async def test_battery_soc_has_state_class(hass):

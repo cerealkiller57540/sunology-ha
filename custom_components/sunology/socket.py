@@ -18,6 +18,7 @@ class SunologySocket():
         self._on_batteryEvent_callback = None
         self._on_gridEvent_callback = None
         self._on_onOffEvent_callback = None
+        self._on_justPaired_callback = None
         self._on_connect_callback = None
         self._on_disconnect_callback = None
         self._socket = None
@@ -32,6 +33,10 @@ class SunologySocket():
         """event: tells you authentication informations."""
         self._on_solarEvent_callback = callback_function
     
+    def subscribe_on_justPaired(self, callback_function):
+        """event: a device has just been paired to the gateway."""
+        self._on_justPaired_callback = callback_function
+
     def subscribe_on_onOffEvent(self, callback_function):
         """event: tells you authentication informations."""
         self._on_onOffEvent_callback = callback_function
@@ -75,6 +80,12 @@ class SunologySocket():
         _LOGGER.debug('SolarEvent received: %s', data)
         self._execute_callback_function_safe('on_solarEvent', self._on_solarEvent_callback, data)
     
+    def on_justPaired(self, data):
+        """ on_justPaired: falls back to productInfo handling without a subscriber """
+        _LOGGER.debug('JustPaired received: %s', data)
+        callback_function = self._on_justPaired_callback or self._on_productInfo_callback
+        self._execute_callback_function_safe('on_justPaired', callback_function, data)
+
     def on_onOffEvent(self, data):
         """ on_solarEvent """
         _LOGGER.debug('OnOffEvent received: %s', data)
@@ -125,7 +136,7 @@ class SunologySocket():
                     case "justPaired":
                         # Sent once when an accessory joins; data is its productInfo
                         # (fw-sconnect JSON_TOOLS_getLan_DeviceJustPairedContent).
-                        self.on_productInfo(message['data'])
+                        self.on_justPaired(message['data'])
                     case _:
                         _LOGGER.warning('Unmanaged event received: %s', message['event'])
             else:

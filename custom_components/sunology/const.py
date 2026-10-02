@@ -10,6 +10,11 @@ GATEWAY_DEFAULT_PORT = 20199
 
 MIN_UNTIL_REFRESH = 2
 
+# Config entry option: Sunology ids the user deleted from Home Assistant. The hub keeps
+# listing a paired accessory even once it is gone, so without this the device would come
+# back on the next productInfo (#10). A new pairing (justPaired) takes it off the list.
+CONF_IGNORED_DEVICES = "ignored_devices"
+
 # Reconnection backoff to the STREAM Connect, in seconds: first retry immediate,
 # then RECONNECT_BACKOFF_BASE doubled on each failed attempt, capped.
 RECONNECT_BACKOFF_BASE = 5

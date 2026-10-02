@@ -51,6 +51,7 @@ from .const import (
     CONF_GATEWAY_HOST,
     CONF_GATEWAY_PORT,
     MIN_UNTIL_REFRESH,
+    CONF_IGNORED_DEVICES,
     RECONNECT_BACKOFF_BASE,
     RECONNECT_BACKOFF_MAX,
     DOMAIN,
@@ -96,13 +97,23 @@ async def async_unload_entry(hass, entry: SunologyConfigEntry):
 
 
 async def async_remove_config_entry_device(hass, config_entry: SunologyConfigEntry, device_entry) -> bool:
-    """Remove a config entry from a device."""
-    return not any(
-        identifier
-        for identifier in device_entry.identifiers
-        if identifier[0] == DOMAIN
-        and identifier[1] in [sunology_device.device_id for sunology_device in config_entry.runtime_data.sunology_devices]
-    )
+    """Let the user delete a device (#10).
+
+    The hub keeps listing a paired accessory even when it is unplugged or replaced, so
+    "still reported by the hub" says nothing about whether the device still exists.
+    Everything can be deleted except the STREAM Connect itself, whose removal is the
+    removal of the integration. A deleted id is ignored until it is paired again.
+    """
+    context = config_entry.runtime_data
+    sunology_ids = {identifier[1] for identifier in device_entry.identifiers if identifier[0] == DOMAIN}
+    if not sunology_ids:
+        return True
+    for device in context.sunology_devices:
+        if device.device_id in sunology_ids and isinstance(device, Gateway):
+            _LOGGER.warning("The STREAM Connect cannot be deleted alone, remove the integration instead")
+            return False
+    context.forget_devices(sunology_ids)
+    return True
 
 
 def _get_device(device_registry, device_id, config_entry_id):
@@ -248,6 +259,7 @@ class SunologyContext:
         socket.subscribe_on_batteryEvent(self.on_batteryEvent_callback)
         socket.subscribe_on_gridEvent(self.on_gridEvent_callback)
         socket.subscribe_on_onOffEvent(self.on_onOffEvent_callback)
+        socket.subscribe_on_justPaired(self.on_justPaired_callback)
 
         socket.subscribe_on_connect(self.on_connect_callback)
         socket.subscribe_on_disconnect(self.on_disconnect_callback)
@@ -314,9 +326,38 @@ class SunologyContext:
         return coordinator
     
     def remove_devices_from_coordinator(self, device: SunologyAbstractDevice):
-        for coordinated_device in self._sunology_devices_coordinated:
-            if device.unique_id == coordinated_device['device'].unique_id:
-                self._sunology_devices_coordinated.remove(coordinated_device)
+        # Rebuild instead of removing while iterating, which skipped the next item.
+        self._sunology_devices_coordinated = [
+            coordinated_device for coordinated_device in self._sunology_devices_coordinated
+            if coordinated_device['device'].unique_id != device.unique_id
+        ]
+
+    @property
+    def ignored_devices(self) -> set:
+        """Sunology ids the user deleted, see CONF_IGNORED_DEVICES."""
+        return set(self._entry.options.get(CONF_IGNORED_DEVICES, []))
+
+    def _set_ignored_devices(self, ids: set):
+        self._hass.config_entries.async_update_entry(
+            self._entry, options={**self._entry.options, CONF_IGNORED_DEVICES: sorted(ids)}
+        )
+
+    def forget_devices(self, device_ids: set):
+        """Drop deleted devices (and Storey packs of a deleted Storey) and ignore them."""
+        def deleted(device):
+            return device.device_id in device_ids or device.device_id.split("#")[0] in device_ids
+        for device in [d for d in self._sunology_devices if deleted(d)]:
+            _LOGGER.info("Device %s deleted by the user, ignored until paired again", device.device_id)
+            self._sunology_devices.remove(device)
+            self.remove_devices_from_coordinator(device)
+        self._set_ignored_devices(self.ignored_devices | set(device_ids))
+
+    def on_justPaired_callback(self, product_data):
+        """A device joined the hub: un-ignore it if the user had deleted it, then add it."""
+        if product_data.get('id') in self.ignored_devices:
+            _LOGGER.info("Device %s paired again, no longer ignored", product_data['id'])
+            self._set_ignored_devices(self.ignored_devices - {product_data['id']})
+        self.on_productInfo_callback(product_data)
 
     async def refresh_devices(self):
         """ here we return last device by id"""
@@ -412,6 +453,9 @@ class SunologyContext:
     def process_new_device(self, product_data):
         new_devices = []
         found = False
+        if product_data.get('id') in self.ignored_devices:
+            _LOGGER.debug("Device %s deleted by the user, ignored", product_data['id'])
+            return new_devices
         for coordinated_device in self._sunology_devices_coordinated:
             _LOGGER.debug("Check if device %s is already known %s", product_data['id'], coordinated_device['device'].device_id)
             if 'device' in coordinated_device.keys():
