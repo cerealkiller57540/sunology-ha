@@ -19,6 +19,7 @@ from homeassistant.setup import async_when_setup
 from homeassistant.const import Platform
 from homeassistant.components import zeroconf
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
     DataUpdateCoordinator,
@@ -299,14 +300,45 @@ class SunologyContext:
 
         if epoch_min != self._previous_refresh:
             self._previous_refresh =  epoch_min
-            for device_coordinated in self._sunology_devices_coordinated:
-                if device_coordinated['device'].device_entry_id is None:
-                    await device_coordinated['device'].register(self.hass, self._entry)
+            if any(
+                device_coordinated['device'].device_entry_id is None
+                for device_coordinated in self._sunology_devices_coordinated
+            ):
+                self._register_devices()
+
+    @callback
+    def _register_devices(self):
+        """Register the devices parents first, so each child links to its parent by id."""
+        device_registry = dr.async_get(self.hass)
+        pending = list(self._sunology_devices)
+        while pending:
+            deferred = []
+            for device in pending:
+                via_device_id = None
+                if device.parent_id is not None:
+                    parent = device_registry.async_get_device(
+                        identifiers={(DOMAIN, device.parent_id)}
+                    )
+                    if parent is None and any(
+                        other.device_id == device.parent_id for other in pending if other is not device
+                    ):
+                        # The parent is known but not registered yet: next pass
+                        deferred.append(device)
+                        continue
+                    via_device_id = parent.id if parent is not None else None
+                device.register(device_registry, self._entry, via_device_id)
+            if len(deferred) == len(pending):
+                # Parent loop, should not happen: register without link rather than never
+                for device in deferred:
+                    device.register(device_registry, self._entry, None)
+                break
+            pending = deferred
     
     async def _reload_platforms(self, epoch_min = math.floor(time.time()/60)):
         _LOGGER.info("Call reload platforms")
         self._previous_refresh =  epoch_min
         if self._entry.state == ConfigEntryState.LOADED:
+            self._register_devices()
             await self.hass.config_entries.async_unload_platforms(self._entry, PLATFORMS)
             await self.hass.config_entries.async_forward_entry_setups(self._entry, PLATFORMS)
 
