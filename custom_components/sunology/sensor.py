@@ -1251,6 +1251,11 @@ class SunologyBatterySocSensorEntity(SensorEntity):
         return SensorDeviceClass.BATTERY
 
     @property
+    def state_class(self):
+        """ Entity state_class: lets HA keep statistics (Energy dashboard, #27) """
+        return SensorStateClass.MEASUREMENT
+
+    @property
     def should_poll(self) -> bool:
         """No need to poll. Coordinator notifies entity of updates."""
         return False

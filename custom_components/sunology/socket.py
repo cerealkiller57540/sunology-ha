@@ -122,6 +122,10 @@ class SunologySocket():
                         self.on_gridEvent(message['data'])
                     case "onOffEvent":
                         self.on_onOffEvent(message['data'])
+                    case "justPaired":
+                        # Sent once when an accessory joins; data is its productInfo
+                        # (fw-sconnect JSON_TOOLS_getLan_DeviceJustPairedContent).
+                        self.on_productInfo(message['data'])
                     case _:
                         _LOGGER.warning('Unmanaged event received: %s', message['event'])
             else:
