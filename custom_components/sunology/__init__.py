@@ -105,6 +105,34 @@ async def async_remove_config_entry_device(hass, config_entry: SunologyConfigEnt
     )
 
 
+def _get_device(device_registry, device_id, config_entry_id):
+    """Registry device of this entry for a Sunology id.
+
+    HA 2026.9 made identifiers non unique across config entries and deprecated the
+    bare async_get_device(identifiers=...) lookup in favour of a per-entry one.
+    """
+    identifier = (DOMAIN, device_id)
+    if hasattr(device_registry, "async_get_device_by_identifier"):
+        return device_registry.async_get_device_by_identifier(identifier, config_entry_id)
+    return device_registry.async_get_device(identifiers={identifier})
+
+
+def _update_entities(coordinated_device):
+    """Push the device state to its entities still attached to a platform.
+
+    A platform reload (new device discovered) recreates every entity; the old
+    objects are detached (platform None) and must not be written to, which is what
+    HA reports as "does not have a platform" (#24 / #25).
+    """
+    entities = coordinated_device.get('device_entities', [])
+    live = [entity for entity in entities if entity.platform is not None and entity.hass is not None]
+    if len(live) != len(entities):
+        coordinated_device['device_entities'] = live
+    for entity in live:
+        _LOGGER.debug('Update entity %s', entity.entity_id)
+        entity.schedule_update_ha_state(force_refresh=False)
+
+
 class SunologyContext:
     """Hold the current Sunology context."""
 
@@ -316,9 +344,7 @@ class SunologyContext:
             for device in pending:
                 via_device_id = None
                 if device.parent_id is not None:
-                    parent = device_registry.async_get_device(
-                        identifiers={(DOMAIN, device.parent_id)}
-                    )
+                    parent = _get_device(device_registry, device.parent_id, self._entry.entry_id)
                     if parent is None and any(
                         other.device_id == device.parent_id for other in pending if other is not device
                     ):
@@ -340,6 +366,9 @@ class SunologyContext:
         if self._entry.state == ConfigEntryState.LOADED:
             self._register_devices()
             await self.hass.config_entries.async_unload_platforms(self._entry, PLATFORMS)
+            # Entities are recreated by the setup below: forget the detached ones.
+            for coordinated_device in self._sunology_devices_coordinated:
+                coordinated_device['device_entities'] = []
             await self.hass.config_entries.async_forward_entry_setups(self._entry, PLATFORMS)
 
     @property
@@ -514,10 +543,7 @@ class SunologyContext:
                     "device_id": device.unique_id,
                     "device_name": device.name,
                 }
-                if 'device_entities' in coordinated_device.keys():
-                    for entity in coordinated_device['device_entities']:
-                        _LOGGER.debug('Update entity %s', entity.entity_id)
-                        entity.schedule_update_ha_state(force_refresh=False)
+                _update_entities(coordinated_device)
                 break
     
     @callback
@@ -535,20 +561,14 @@ class SunologyContext:
                         device.acVoltage = data['acVoltage']
                     if 'battery' in data.keys():
                         device.battery_event_update(data['battery'])
-                    if 'device_entities' in coordinated_device.keys():
-                        for entity in coordinated_device['device_entities']:
-                            _LOGGER.debug('Update entity %s', entity.entity_id)
-                            entity.schedule_update_ha_state(force_refresh=False)
+                    _update_entities(coordinated_device)
                     if 'packs' in data.keys():
                         for pack in data['packs']:
                             for sub_coordinated_device in self._sunology_devices_coordinated:
                                 sub_device = sub_coordinated_device['device']
                                 if sub_device.device_id == f"{data['id']}#{pack['packIndex'] }":
                                     sub_device.battery_event_update(pack)
-                                    if 'device_entities' in sub_coordinated_device.keys():
-                                        for entity in sub_coordinated_device['device_entities']:
-                                            _LOGGER.debug('Update entity %s', entity.entity_id)
-                                            entity.schedule_update_ha_state(force_refresh=False)
+                                    _update_entities(sub_coordinated_device)
                                     break
                 else:
                     _LOGGER.info("Solar event receive on non storey master device")
@@ -564,10 +584,7 @@ class SunologyContext:
             if device.device_id == data['id']:
                 if isinstance(device, (SmartMeter_3P, LinkyTransmitter)):
                     device.update_gridevent(data)
-                    if 'device_entities' in coordinated_device.keys():
-                        for entity in coordinated_device['device_entities']:
-                            _LOGGER.debug('Update entity %s', entity.entity_id)
-                            entity.schedule_update_ha_state(force_refresh=False)
+                    _update_entities(coordinated_device)
                 else:
                     _LOGGER.info("Grid event receive on non grid meter device")
                 event_data = {
@@ -586,10 +603,7 @@ class SunologyContext:
             if device.device_id == data['id']:
                 if isinstance(device, (OnOffDevice)):
                     device.update_onOff_event(data)
-                    if 'device_entities' in coordinated_device.keys():
-                        for entity in coordinated_device['device_entities']:
-                            _LOGGER.debug('Update entity %s', entity.entity_id)
-                            entity.schedule_update_ha_state(force_refresh=False)
+                    _update_entities(coordinated_device)
                 else:
                     _LOGGER.info("OnOff event receive on non on/off device")
                 event_data = {

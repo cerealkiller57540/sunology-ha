@@ -81,9 +81,18 @@ async def settle(hass, ctx):
     await hass.async_block_till_done()
 
 
+def get_dev(hass, dev_id):
+    """Sunology device of the (single) test entry, on any HA version."""
+    devreg = dr.async_get(hass)
+    entry = hass.config_entries.async_entries(DOMAIN)[0]
+    if hasattr(devreg, "async_get_device_by_identifier"):
+        return devreg.async_get_device_by_identifier((DOMAIN, dev_id), entry.entry_id)
+    return devreg.async_get_device(identifiers={(DOMAIN, dev_id)})
+
+
 def entities_of(hass, dev_id):
     devreg, entreg = dr.async_get(hass), er.async_get(hass)
-    device = devreg.async_get_device(identifiers={(DOMAIN, dev_id)})
+    device = get_dev(hass, dev_id)
     assert device is not None, f"device {dev_id} not registered"
     return device, {e.unique_id: e for e in er.async_entries_for_device(entreg, device.id)}
 

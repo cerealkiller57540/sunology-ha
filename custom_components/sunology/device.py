@@ -3,6 +3,12 @@ from .const import SmartMeterPhase, SmartMeterTarifIndex, ElectricalDataFeature,
 from homeassistant.helpers.device_registry import DeviceInfo, DeviceEntry
 from homeassistant.helpers import device_registry as dr
 from collections.abc import Callable
+from homeassistant.helpers.device_registry import DeviceInfo as _DeviceInfo
+
+# via_device (identifier tuple) is deprecated from HA 2026.8 and removed in 2027.8;
+# via_device_id does not exist before 2026.8. hacs.json supports 2024.10+, so pick
+# the form the running core understands.
+_HA_HAS_VIA_DEVICE_ID = "via_device_id" in getattr(_DeviceInfo, "__annotations__", {})
 from typing import List
 import logging
 
@@ -125,11 +131,15 @@ class SunologyAbstractDevice():
             sw_version=self.sw_version,
             hw_version=self.hw_version,
         )
-        # Link to the parent by registry id, known once register() ran. HA rejects
-        # (does not add the entity) a via_device_id that is not a registered device,
-        # so it is only set when the parent was found in the registry.
-        if self._via_device_id is not None:
-            dev_info["via_device_id"] = self._via_device_id
+        if _HA_HAS_VIA_DEVICE_ID:
+            # HA >= 2026.8: link to the parent by registry id, known once register()
+            # ran. HA rejects (does not add the entity) a via_device_id that is not a
+            # registered device, so it is only set when the parent was found.
+            if self._via_device_id is not None:
+                dev_info["via_device_id"] = self._via_device_id
+        elif self._parent_id is not None:
+            # HA < 2026.8 only knows the identifier tuple form.
+            dev_info["via_device"] = (SUNOLOGY_DOMAIN, self._parent_id)
         return dev_info
 
     def register(self, device_registry: dr.DeviceRegistry, entry, via_device_id: str | None) -> DeviceEntry:
