@@ -110,7 +110,7 @@ async def test_tap_device_and_entities(hass):
     assert device.manufacturer == "Legrand"
 
     expected = {
-        f"relaystate_{tid}", f"contactor_mode_{tid}", f"apparent_power_all_{tid}",
+        f"relaystate_{tid}", f"contactor_mode_{tid}",
         f"flownodemode_{tid}", f"runtime_on_{tid}", f"target_power_{tid}",
         f"min_on_time_{tid}", f"runtime_min_{tid}", f"max_cons_{tid}",
         f"contactor_status_{tid}",
@@ -147,7 +147,6 @@ async def test_tap_on_off_event(hass):
     assert status.state == "forced_on"
     assert status.attributes["contactor_mode_code"] == 3
     assert status.attributes["relay_on"] is True
-    assert state(hass, ents, f"apparent_power_all_{tid}").state == "1490"
     assert state(hass, ents, f"runtime_on_{tid}").state == "42"
     assert state(hass, ents, f"target_power_{tid}").state == "2100"
 

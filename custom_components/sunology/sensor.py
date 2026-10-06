@@ -136,8 +136,8 @@ async def async_setup_entry(hass, config_entry, async_add_entities): # pylint: d
                 if isinstance(device, OnOffDevice):
                     new_entities.append(SunologyElectricalDataSensorEntity_Power(device,  SmartMeterPhase.ALL, hass))
                     new_entities.append(SunologyElectricalDataSensorEntity_Power(device,  SmartMeterPhase.ALL, hass, True))
-                    new_entities.append(SunologyElectricalDataSensorEntity_ApparentPower(device,  SmartMeterPhase.ALL, hass))
-                    new_entities.append(SunologyElectricalDataSensorEntityFeature(device, SmartMeterPhase.ALL, hass))
+                    if not isinstance (device, LegrandContactor):
+                        new_entities.append(SunologyElectricalDataSensorEntity_ApparentPower(device,  SmartMeterPhase.ALL, hass))
                     # A device without a METERING cluster never reports a cumulated
                     # counter: an energy sensor would stay None forever and pollute the
                     # Energy dashboard.
