@@ -20,6 +20,7 @@ from homeassistant.const import Platform
 from homeassistant.components import zeroconf
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
     DataUpdateCoordinator,
@@ -82,8 +83,28 @@ async def async_setup_entry(hass, entry: SunologyConfigEntry):
     # We add device to the context
     await context.init_context(hass)
 
+    _enable_power_entities_disabled_by_integration(hass, entry)
     await hass.config_entries.async_forward_entry_setups(entry,PLATFORMS)
     return True
+
+
+def _enable_power_entities_disabled_by_integration(hass, entry) -> None:
+    """Re-enable the power entities that versions 1.2.1 to 1.4.0 disabled by mistake.
+
+    Those versions enabled the reversed power entity and disabled the normal one.
+    Only entities disabled by the integration are touched: a choice made by the
+    user (disabled_by == USER) and the reversed entities are left as they are.
+    """
+    registry = er.async_get(hass)
+    for entity in er.async_entries_for_config_entry(registry, entry.entry_id):
+        unique_id = entity.unique_id
+        if (
+            entity.disabled_by is er.RegistryEntryDisabler.INTEGRATION
+            and unique_id.startswith("power_")
+            and "_reversed_" not in unique_id
+        ):
+            _LOGGER.info("Enabling %s, wrongly disabled by default", entity.entity_id)
+            registry.async_update_entity(entity.entity_id, disabled_by=None)
 
 
 async def async_unload_entry(hass, entry: SunologyConfigEntry):

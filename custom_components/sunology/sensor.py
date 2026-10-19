@@ -1599,8 +1599,8 @@ class SunologyElectricalDataSensorEntity_Power(SensorEntity):
     
     @property
     def entity_registry_enabled_default(self):
-        """Dsiable entity in reversed by default"""
-        return self._reversed
+        """Disable the reversed entity by default, keep the normal one enabled."""
+        return not self._reversed
 
     @property
     def state_class(self):
