@@ -1599,8 +1599,8 @@ class SunologyElectricalDataSensorEntity_Power(SensorEntity):
     
     @property
     def entity_registry_enabled_default(self):
-        """Disable the reversed entity by default, keep the normal one enabled."""
-        return not self._reversed
+        """Reversed entity (Home Assistant sign convention) enabled by default, normal one disabled."""
+        return self._reversed
 
     @property
     def state_class(self):
