@@ -173,8 +173,13 @@ class SolarEventInterface():
         return getattr(self, '_mppts_data', {})
     
     def solar_event_update(self, data):
-        self._miP = data['miP'] if 'miP' in data.keys() else _LOGGER.warning(f"Solar event receive without the required miP {data}")
-        self._pvP = data['pvP'] if 'pvP' in data.keys() else _LOGGER.warning(f"Solar event receive without the required pvP {data}")
+        # A missing field keeps the last known value instead of resetting it to None.
+        if 'miP' in data:
+            self._miP = data['miP']
+        if 'pvP' in data:
+            self._pvP = data['pvP']
+        if 'miP' not in data and 'pvP' not in data:
+            _LOGGER.debug("Solar event without miP / pvP for %s", data.get('id'))
         if 'mppts' in data.keys():
             for mppt_data in data['mppts']:
                 mppt_index = mppt_data['mpptIndex']
@@ -285,12 +290,21 @@ class BatteryEventInterface():
         return self._energyProd
 
     def battery_event_update(self, data):
-        """Return the miP value"""
-        """ 
+        """Update the battery values from a batteryEvent (STOREY) or solarEvent (PLAY Max).
+
+        The STOREY sends the battery power as `batPow`, the PLAY Max as `batP`
+        (fw-sconnect PlayMaxDto). A missing field keeps the last known value.
         """
-        self._batP = data['batPow'] if 'batPow' in data.keys() else _LOGGER.warning(f"Battery event receive without the required batPow {data}")
-        self._batPct = data['batPct'] if 'batPct' in data.keys() else _LOGGER.warning(f"Battery event receive without the required batPct {data}") 
-        self._batTmp = data['batTmp'] if 'batTmp' in data.keys() else _LOGGER.warning(f"Battery event receive without the required batTmp {data}") 
+        if 'batPow' in data:
+            self._batP = data['batPow']
+        elif 'batP' in data:
+            self._batP = data['batP']
+        else:
+            _LOGGER.debug("Battery event without battery power for %s", data.get('id'))
+        if 'batPct' in data:
+            self._batPct = data['batPct']
+        if 'batTmp' in data:
+            self._batTmp = data['batTmp']
         if 'cellsTmp' in data.keys():
             self._cellsTmp = data['cellsTmp']
         if 'radTmp' in data.keys():
