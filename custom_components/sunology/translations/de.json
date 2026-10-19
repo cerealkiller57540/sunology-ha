@@ -23,5 +23,17 @@
     "create_entry": {
       "default": "Pairing erfolgreich"
     }
+  },
+  "entity": {
+    "sensor": {
+      "contactor_status": {
+        "state": {
+          "active": "ON",
+          "idle": "OFF",
+          "forced_on": "Zwangsbetrieb",
+          "unknown": "Unbekannter Status"
+        }
+      }
+    }
   }
 }

@@ -23,5 +23,17 @@
     "create_entry": {
       "default": "Emparejamiento exitoso"
     }
+  },
+  "entity": {
+    "sensor": {
+      "contactor_status": {
+        "state": {
+          "active": "ON",
+          "idle": "OFF",
+          "forced_on": "Marcha forzada",
+          "unknown": "Estado desconocido"
+        }
+      }
+    }
   }
 }

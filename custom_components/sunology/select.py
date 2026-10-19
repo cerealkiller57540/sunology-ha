@@ -10,7 +10,8 @@ from homeassistant.components.select import SelectEntity, ENTITY_ID_FORMAT
 from .const import FlowWorkingModes, PACKAGE_NAME, DOMAIN as SUNOLOGY_DOMAIN
 from .device import (
     SunologyAbstractDevice,
-    Gateway
+    Gateway,
+    OnOffDevice
 )
 
 _LOGGER = logging.getLogger(PACKAGE_NAME) 
@@ -46,7 +47,10 @@ async def async_setup_entry(hass, config_entry, async_add_entities): # pylint: d
                 coordinator = coordinated_device['coordinator']
                 new_entities = []
                 if isinstance(device, Gateway):
-                    new_entities.append(SunologFlowWorkingModeSelectEntity(device, hass))
+                    new_entities.append(SunologyFlowWorkingModeSelectEntity(device, hass))
+                
+                if isinstance(device, OnOffDevice):
+                    new_entities.append(SunologyFlowNodeModeSelectEntity(device, hass))
 
                 if not 'device_entities' in coordinated_device: 
                     coordinated_device['device_entities'] = []
@@ -56,11 +60,11 @@ async def async_setup_entry(hass, config_entry, async_add_entities): # pylint: d
     _check_device()
     return True
 
-class SunologFlowWorkingModeSelectEntity(SelectEntity):
-    """Represent a pvpower of a  device."""
+class SunologyFlowWorkingModeSelectEntity(SelectEntity):
+    """Represent a flow working mode of a Gateway device."""
 
     def __init__(self, device:SunologyAbstractDevice, hass):
-        """Set up SunologPvPowerSensor entity."""
+        """Set up SunologyFlowWorkingModeSelectEntity for Gateway device."""
         
         self._device = device
         self._name = device.name
@@ -110,13 +114,80 @@ class SunologFlowWorkingModeSelectEntity(SelectEntity):
 
     @property
     def name(self):
-        """ pvP name """
+        """Return the name of the entity."""
         return f"{self._name} flow working mode"
 
     @property
     def icon(self):
         """icon getter"""
         return "mdi:finance"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return the device info."""
+        return self._device.device_info
+
+class SunologyFlowNodeModeSelectEntity(SelectEntity):
+    """Represent a flow node mode of an on/off device."""
+
+    def __init__(self, device:SunologyAbstractDevice, hass):
+        """Set up SunologyFlowNodeModeSelectEntity for an on/off device."""
+        
+        self._device = device
+        self._name = device.name
+        self.entity_id = f"{ENTITY_ID_FORMAT.format(f"flowNodeMode")}_{_format_devid_mac(device.device_id)}".lower()# pylint: disable=C0301
+        self._attr_device_info = device.device_info # For automatic device registration
+        self._state = None
+        self._hass = hass
+
+    @property
+    def entity_category(self):
+        return None
+
+    @property
+    def hass(self):
+        return self._hass
+
+    @hass.setter
+    def hass(self, hass):
+        pass
+
+    @property
+    def unique_id(self):
+        """Return the unique ID."""
+        return f"flowNodeMode_{_format_devid_mac(self._device.device_id)}".lower()
+
+    @property
+    def current_option(self):
+        """state property"""
+        return self.state
+
+    @property
+    def state(self):
+        """state property"""
+        self._state = self._device.flowNodeConfig.mode
+        return self._state
+
+    @property
+    def options(self):
+        """options list property"""
+        return self._device.supported_flow_node_modes
+
+
+    async def async_select_option(self, option: str) -> None:
+        """Change the selected option."""
+        self._state = option
+        await self._device._set_flowNodeMode(option)
+
+    @property
+    def name(self):
+        """Return the name of the entity."""
+        return f"{self._name} flow node mode"
+
+    @property
+    def icon(self):
+        """icon getter"""
+        return "mdi:lock-clock"
 
     @property
     def device_info(self) -> DeviceInfo:

@@ -1,8 +1,14 @@
 """Home Assistant representation of an Sunology device."""
-from .const import SmartMeterPhase, SmartMeterTarifIndex, ElectricalDataFeature, FlowWorkingModes, DOMAIN as SUNOLOGY_DOMAIN, PACKAGE_NAME
+from .const import SmartMeterPhase, SmartMeterTarifIndex, ElectricalDataFeature, FlowWorkingModes, FeatureFlowNodeModes, ContactorMode, ContactorStatus, DOMAIN as SUNOLOGY_DOMAIN, PACKAGE_NAME
 from homeassistant.helpers.device_registry import DeviceInfo, DeviceEntry
 from homeassistant.helpers import device_registry as dr
 from collections.abc import Callable
+from homeassistant.helpers.device_registry import DeviceInfo as _DeviceInfo
+
+# via_device (identifier tuple) is deprecated from HA 2026.8 and removed in 2027.8;
+# via_device_id does not exist before 2026.8. hacs.json supports 2024.10+, so pick
+# the form the running core understands.
+_HA_HAS_VIA_DEVICE_ID = "via_device_id" in getattr(_DeviceInfo, "__annotations__", {})
 from typing import List
 import logging
 
@@ -18,8 +24,12 @@ class SunologyAbstractDevice():
         self._hw_version: str = raw_device['hwVersion'] if 'hwVersion' in raw_device.keys() else None
         self._device_entry_id = None
         self._parent_id: str = raw_device['parentId'] if 'parentId' in raw_device.keys() else None
+        self._via_device_id: str | None = None
         self._name: str = raw_device['name'] if 'name' in raw_device.keys() else f"{self.model_name} {self.device_id}"
         self._rssi: int = raw_device['rssi'] if 'rssi' in raw_device.keys() else raw_device['rssiWifi'] if 'rssiWifi' in raw_device.keys() else None
+        self._bssid: int = raw_device['bssid'] if 'bssid' in raw_device.keys() else None
+        self._wifiIP: int = raw_device['wifiIP'] if 'wifiIP' in raw_device.keys() else None
+        self._ethIP: int = raw_device['ethIP'] if 'ethIP' in raw_device.keys() else None
 
     @property
     def default_manufacturer(self) -> str:
@@ -42,9 +52,9 @@ class SunologyAbstractDevice():
         return self._name
 
     @property
-    def via_device(self):
-        """Get the unique id."""
-        return (SUNOLOGY_DOMAIN, self._parent_id)
+    def parent_id(self) -> str | None:
+        """Get the Sunology id of the parent device, if any."""
+        return self._parent_id
 
     @property
     def sw_version(self) -> str:
@@ -79,6 +89,18 @@ class SunologyAbstractDevice():
     def rssi(self):
         return self._rssi
 
+    @property
+    def bssid(self):
+        return self._bssid
+    
+    @property
+    def wifiIP(self):
+        return self._wifiIP
+
+    @property
+    def ethIP(self):
+        return self._ethIP
+
     def update_product(self, raw_event):
         if 'rssi' in raw_event.keys():
             self._rssi = raw_event['rssi']
@@ -89,7 +111,15 @@ class SunologyAbstractDevice():
         if 'swVersion' in raw_event.keys():
             self._software_version = raw_event['swVersion']
 
-    
+        if 'bssid' in raw_event.keys():
+            self._bssid = raw_event['bssid']
+
+        if 'wifiIP' in raw_event.keys():
+            self._wifiIP = raw_event['wifiIP']
+
+        if 'ethIP' in raw_event.keys():
+            self._ethIP = raw_event['ethIP']
+
     @property
     def device_info(self):
         """Return the device info."""
@@ -100,13 +130,22 @@ class SunologyAbstractDevice():
             model=self.model_name,
             sw_version=self.sw_version,
             hw_version=self.hw_version,
-            via_device=self.via_device if self._parent_id is not None else None
         )
+        if _HA_HAS_VIA_DEVICE_ID:
+            # HA >= 2026.8: link to the parent by registry id, known once register()
+            # ran. HA rejects (does not add the entity) a via_device_id that is not a
+            # registered device, so it is only set when the parent was found.
+            if self._via_device_id is not None:
+                dev_info["via_device_id"] = self._via_device_id
+        elif self._parent_id is not None:
+            # HA < 2026.8 only knows the identifier tuple form.
+            dev_info["via_device"] = (SUNOLOGY_DOMAIN, self._parent_id)
         return dev_info
 
-    async def register(self, hass, entry) -> DeviceEntry :
-        device_registry_instance = dr.async_get(hass)
-        device_entry = await device_registry_instance.async_get_or_create(
+    def register(self, device_registry: dr.DeviceRegistry, entry, via_device_id: str | None) -> DeviceEntry:
+        """Register the device in the device registry, linked to its parent device id."""
+        self._via_device_id = via_device_id
+        device_entry = device_registry.async_get_or_create(
             config_entry_id=entry.entry_id,
             **self.device_info
         )
@@ -128,9 +167,19 @@ class SolarEventInterface():
         """Return the miP value"""
         return self._miP
     
+    @property
+    def mppts_data(self):
+        """Return the mppts_data dictionary"""
+        return getattr(self, '_mppts_data', {})
+    
     def solar_event_update(self, data):
         self._miP = data['miP'] if 'miP' in data.keys() else _LOGGER.warning(f"Solar event receive without the required miP {data}")
         self._pvP = data['pvP'] if 'pvP' in data.keys() else _LOGGER.warning(f"Solar event receive without the required pvP {data}")
+        if 'mppts' in data.keys():
+            for mppt_data in data['mppts']:
+                mppt_index = mppt_data['mpptIndex']
+                if hasattr(self, "_mppts_data") and mppt_index in self._mppts_data:
+                    self._mppts_data[mppt_index].update_mppt_data(mppt_data)
 
 class BatteryPackInterface():
     """Sunology extra porperties for events."""
@@ -268,6 +317,9 @@ class PLAY(SunologyAbstractDevice, SolarEventInterface):
         SolarEventInterface.__init__(self, raw_play)
         self._pvP = None
         self._miP = None
+        self._mppts_data = {
+            0: MpptInterface()
+        }
 
     @property
     def suggested_area(self) -> str:
@@ -278,6 +330,75 @@ class PLAY(SunologyAbstractDevice, SolarEventInterface):
     def model_name(self) -> str:
         """Get the model name."""
         return "PLAY"
+    
+    @property
+    def device_info(self):
+        dev_info = super().device_info
+        return dev_info
+
+
+    def __str__(self) -> str:
+        """Get string representation."""
+        return f"Sunology Device: {self.name}::{self.model_name}::{self.unique_id}"
+
+class CITY(SunologyAbstractDevice, SolarEventInterface):
+    """Home Assistant representation of a Sunology device CITY."""
+
+    def __init__(self, raw_play):
+        """Initialize CITY device."""
+        super().__init__(raw_play)
+        SolarEventInterface.__init__(self, raw_play)
+        self._pvP = None
+        self._miP = None
+        self._mppts_data = {
+            0: MpptInterface()
+        }
+
+    @property
+    def suggested_area(self) -> str:
+        """Get the suggested_area."""
+        return "Garden"
+        
+    @property
+    def model_name(self) -> str:
+        """Get the model name."""
+        return "CITY"
+    
+    @property
+    def device_info(self):
+        dev_info = super().device_info
+        return dev_info
+
+
+    def __str__(self) -> str:
+        """Get string representation."""
+        return f"Sunology Device: {self.name}::{self.model_name}::{self.unique_id}"
+
+class HOMEInverter(SunologyAbstractDevice, SolarEventInterface):
+    """Home Assistant representation of a Sunology device PLAY."""
+
+    def __init__(self, raw_play):
+        """Initialize Home solar inverter device."""
+        super().__init__(raw_play)
+        SolarEventInterface.__init__(self, raw_play)
+        self._pvP = None
+        self._miP = None
+        self._acVoltage = None
+        self._mppts_data = {
+            0:   MpptInterface(),
+            1:   MpptInterface()
+        }
+
+
+    @property
+    def suggested_area(self) -> str:
+        """Get the suggested_area."""
+        return "Garden"
+        
+    @property
+    def model_name(self) -> str:
+        """Get the model name."""
+        return "HOME Solar"
     
     @property
     def device_info(self):
@@ -411,12 +532,13 @@ class PLAYMax(SunologyAbstractDevice, SolarEventInterface, BatteryEventInterface
 class SmartMeter_ElectricalData():
     """Home Assistant representation of a Sunology SmartMeter_electrical_data property."""
 
-    def __init__(self, current=None, voltage=None, power_factor=None, power=None, conso_tot=None, prod_tot=None):
+    def __init__(self, current=None, voltage=None, power_factor=None, power=None, apparent_power=None, conso_tot=None, prod_tot=None):
         """Initialize SmartMeter_electrical_data property."""
         self._current = current
         self._voltage = voltage
         self._power_factor = power_factor
         self._power = power
+        self._apparent_power = apparent_power
         self._conso_tot = conso_tot
         self._prod_tot = prod_tot
 
@@ -441,6 +563,11 @@ class SmartMeter_ElectricalData():
         return self._power
 
     @property
+    def apparent_power(self):
+        """Get the apparent_power"""
+        return self._apparent_power
+
+    @property
     def conso_tot(self):
         """Get the conso_tot"""
         return self._conso_tot
@@ -449,7 +576,7 @@ class SmartMeter_ElectricalData():
     def prod_tot(self):
         """Get the prod_tot"""
         return self._prod_tot
-    
+
     def update_electrical_data(self, raw_electrical_data):
         if 'current' in raw_electrical_data.keys():
             self._current = raw_electrical_data['current']
@@ -459,10 +586,53 @@ class SmartMeter_ElectricalData():
             self._power_factor = raw_electrical_data['powerFactor']
         if 'power' in raw_electrical_data.keys():
             self._power = raw_electrical_data['power']
+        if 'apparentPower' in raw_electrical_data.keys():
+            self._apparent_power = raw_electrical_data['apparentPower']
         if 'consoTot' in raw_electrical_data.keys():
             self._conso_tot = raw_electrical_data['consoTot']
         if 'prodTot' in raw_electrical_data.keys():
             self._prod_tot = raw_electrical_data['prodTot']
+
+class MpptInterface():
+    """Home Assistant representation of a Sunology MPPT property."""
+
+    def __init__(self, current=None, voltage=None, power=None, prod_tot=None):
+        """Initialize MPPT property."""
+        self._current = current
+        self._voltage = voltage
+        self._power = power
+        self._prod_tot = prod_tot
+
+    @property
+    def current(self):
+        """Get the current"""
+        return self._current
+
+    @property
+    def voltage(self):
+        """Get the voltage"""
+        return self._voltage
+
+    @property
+    def power(self):
+        """Get the power"""
+        return self._power
+
+    @property
+    def prod_tot(self):
+        """Get the prod_tot"""
+        return self._prod_tot
+    
+    def update_mppt_data(self, raw_mppt_data):
+        """Update MPPT data from raw event data."""
+        if 'pvI' in raw_mppt_data.keys():
+            self._current = raw_mppt_data['pvI']
+        if 'pvV' in raw_mppt_data.keys():
+            self._voltage = raw_mppt_data['pvV']
+        if 'pvP' in raw_mppt_data.keys():
+            self._power = raw_mppt_data['pvP']
+        if 'totalGen' in raw_mppt_data.keys():
+            self._prod_tot = raw_mppt_data['totalGen']
 
 
 class SmartMeter_ElectricalDataFeatures():
@@ -560,22 +730,152 @@ class SmartMeter_ElectricalDataFeatures():
         else:
             self._electricalDataP3 = ElectricalDataFeature.UNUSED
 
+class FlowDevice_FlowNodeConfig():
+    """Home Assistant representation of a Sunology SmartMeter_electrical_data_feature property."""
 
-        if 'flowConfig' in raw_electrical_data_feature.keys():
-            if 'flowReady' in raw_electrical_data_feature['flowConfig'].keys():
-                self._flow_ready = raw_electrical_data_feature['flowReady']
-            if 'estimatedPowerUsage' in raw_electrical_data_feature['flowConfig'].keys():
-                self._estimated_power_usage = raw_electrical_data_feature['flowConfig']['estimatedPowerUsage']
-            if 'minActiveTime' in raw_electrical_data_feature['flowConfig'].keys():
-                self._min_active_time = raw_electrical_data_feature['flowConfig']['minActiveTime']
-            if 'maxActiveTime' in raw_electrical_data_feature['flowConfig'].keys():
-                self._max_active_time = raw_electrical_data_feature['flowConfig']['maxActiveTime']
-            if 'minEnergyUsage' in raw_electrical_data_feature['flowConfig'].keys():
-                self._min_energy_usage = raw_electrical_data_feature['flowConfig']['minEnergyUsage']
-            if 'maxEnergyUsage' in raw_electrical_data_feature['flowConfig'].keys():
-                self._max_energy_usage = raw_electrical_data_feature['flowConfig']['maxEnergyUsage']
-            if 'priority' in raw_electrical_data_feature['flowConfig'].keys():
-                self._priority = raw_electrical_data_feature['flowConfig']['priority']
+    def __init__(self, enabled=None, mode=None, priority=None, type=None, autoCalib=None, efficiency=None,
+                 dailyRuntimeEn=None, runtimeMin=None, runtimeMax=None, dailyEnergyEn=None,
+                 energyMin=None, energyMax=None, minOnTime=None, minCons=None, maxCons=None,
+                 minProd=None, maxProd=None):
+        """Initialize SmartMeter_electrical_data property."""
+        self._enabled = enabled
+        self._mode = mode
+        self._priority = priority
+        self._type = type
+        self._autoCalib = autoCalib
+        self._efficiency = efficiency
+        self._dailyRuntimeEn = dailyRuntimeEn
+        self._runtimeMin = runtimeMin
+        self._runtimeMax = runtimeMax
+        self._dailyEnergyEn = dailyEnergyEn
+        self._energyMin = energyMin
+        self._energyMax = energyMax
+        self._minOnTime = minOnTime
+        self._minCons = minCons
+        self._maxCons = maxCons
+        self._minProd = minProd
+        self._maxProd = maxProd
+    
+    @property
+    def enabled(self):
+        """True if the device is part of the Flow (false will be skipped for any feature)"""
+        return self._enabled
+
+    @property
+    def mode(self):
+        """Get the mode"""
+        return self._mode
+
+    @property
+    def priority(self):
+        """Get the priority"""
+        return self._priority
+
+    @property
+    def type(self):
+        """Get the type"""
+        return self._type
+
+    @property
+    def autoCalib(self):
+        """True if the device supports auto calibration (power measurement for consumer)"""
+        return self._autoCalib
+
+    @property
+    def efficiency(self):
+        """Device efficiency in percent. i.e. 80.3 = 80.3%"""
+        return self._efficiency
+
+    @property
+    def dailyRuntimeEn(self):
+        """True if the device supports daily runtime feature"""
+        return self._dailyRuntimeEn
+
+    @property
+    def runtimeMin(self):
+        """Minimum daily active time in minutes"""
+        return self._runtimeMin
+
+    @property
+    def runtimeMax(self):
+        """Maximum daily active time in minutes"""
+        return self._runtimeMax
+
+    @property
+    def dailyEnergyEn(self):
+        """True if the device supports daily energy feature"""
+        return self._dailyEnergyEn
+
+    @property
+    def energyMin(self):
+        """Minimum daily energy usage in Wh"""
+        return self._energyMin
+
+    @property
+    def energyMax(self):
+        """Maximum daily energy usage in Wh"""
+        return self._energyMax
+
+    @property
+    def minOnTime(self):
+        """Minimal on time in seconds to prevent hardware degradation"""
+        return self._minOnTime
+
+    @property
+    def minCons(self):
+        """Minimum consumption power usage"""
+        return self._minCons
+
+    @property
+    def maxCons(self):
+        """Maximum consumption power usage"""
+        return self._maxCons
+
+    @property
+    def minProd(self):
+        """Minimum production power usage"""
+        return self._minProd
+
+    @property
+    def maxProd(self):
+        """Maximum production power usage"""
+        return self._maxProd
+
+    def update_flowNode(self, raw_flowNode):
+        if 'enabled' in raw_flowNode.keys():
+            self._enabled = raw_flowNode['enabled']
+        if 'mode' in raw_flowNode.keys():
+            self._mode = raw_flowNode['mode']
+        if 'priority' in raw_flowNode.keys():
+            self._priority = raw_flowNode['priority']
+        if 'type' in raw_flowNode.keys():
+            self._type = raw_flowNode['type']
+        if 'autoCalib' in raw_flowNode.keys():
+            self._autoCalib = raw_flowNode['autoCalib']
+        if 'efficiency' in raw_flowNode.keys():
+            self._efficiency = raw_flowNode['efficiency']
+        if 'dailyRuntimeEn' in raw_flowNode.keys():
+            self._dailyRuntimeEn = raw_flowNode['dailyRuntimeEn']
+        if 'runtimeMin' in raw_flowNode.keys():
+            self._runtimeMin = raw_flowNode['runtimeMin']
+        if 'runtimeMax' in raw_flowNode.keys():
+            self._runtimeMax = raw_flowNode['runtimeMax']
+        if 'dailyEnergyEn' in raw_flowNode.keys():
+            self._dailyEnergyEn = raw_flowNode['dailyEnergyEn']
+        if 'energyMin' in raw_flowNode.keys():
+            self._energyMin = raw_flowNode['energyMin']
+        if 'energyMax' in raw_flowNode.keys():
+            self._energyMax = raw_flowNode['energyMax']
+        if 'minOnTime' in raw_flowNode.keys():
+            self._minOnTime = raw_flowNode['minOnTime']
+        if 'minCons' in raw_flowNode.keys():
+            self._minCons = raw_flowNode['minCons']
+        if 'maxCons' in raw_flowNode.keys():
+            self._maxCons = raw_flowNode['maxCons']
+        if 'minProd' in raw_flowNode.keys():
+            self._minProd = raw_flowNode['minProd']
+        if 'maxProd' in raw_flowNode.keys():
+            self._maxProd = raw_flowNode['maxProd']
 
 class SmartMeter_IndexesErl():
     """Home Assistant representation of a Sunology SmartMeter_IndexesErl property."""
@@ -654,6 +954,184 @@ class SmartMeter_IndexesErl():
         if 'energyConsumed_Ix10' in raw_indexes_erl.keys():
             self._energy_consumed_indexed[SmartMeterTarifIndex.INDEX_10] = raw_indexes_erl['energyConsumedIdx10']
 
+class OnOffDevice(SunologyAbstractDevice):
+    """Home Assistant representation of a Sunology on/off device driven by the Flow."""
+
+    def __init__(self, raw_device, set_flowNodeMode_callback: Callable[[str], None] = None):
+        """Initialize on/off device."""
+        super().__init__(raw_device)
+
+        self._electrical_data = {
+            SmartMeterPhase.ALL: SmartMeter_ElectricalData()
+        }
+        self._state = None
+        # Sent by the hub on every onOffEvent of a device that is a Flow node
+        # (Device::attributesToCJson, fw-sconnect): minutes of runtime today and the
+        # power the Flow currently grants the device.
+        self._runtime_on = None
+        self._target_power = None
+        self._flowNodeConfig = FlowDevice_FlowNodeConfig()
+        self._features = SmartMeter_ElectricalDataFeatures()
+        if 'features' in raw_device.keys():
+            self._features.update_electrical_data_feature(raw_device['features'])
+            if "flowNode" in raw_device["features"].keys():
+                self._flowNodeConfig.update_flowNode(raw_device["features"]["flowNode"])
+
+        self._set_flowNodeMode_callback = set_flowNodeMode_callback
+
+    @property
+    def state(self):
+        """Get the state."""
+        return self._state
+
+    @property
+    def runtime_on(self):
+        """Minutes the device has been on today, as counted by the Flow."""
+        return self._runtime_on
+
+    @property
+    def target_power(self):
+        """Power in W the Flow currently grants the device."""
+        return self._target_power
+
+    @property
+    def supported_flow_node_modes(self) -> List[str]:
+        """Get the flow node modes the hardware can actually honour."""
+        return [e.name for e in FeatureFlowNodeModes]
+
+    @property
+    def has_energy_metering(self) -> bool:
+        """True when the device reports a cumulated energy counter."""
+        return True
+
+    @property
+    def device_info(self):
+        dev_info = super().device_info
+        return dev_info
+
+    @property
+    def flowNodeConfig(self):
+        """Get the flowMode"""
+        return self._flowNodeConfig
+
+    @property
+    def electrical_data(self):
+        """Get the electrical_data"""
+        return self._electrical_data
+
+    @property
+    def features(self):
+        """Get the features"""
+        return self._features
+
+    def update_onOff_event(self, raw_onOff_event):
+        if "onOff" in raw_onOff_event.keys():
+            self._state = raw_onOff_event['onOff']
+        if "runtimeOn" in raw_onOff_event.keys():
+            self._runtime_on = raw_onOff_event['runtimeOn']
+        if "targetPower" in raw_onOff_event.keys():
+            self._target_power = raw_onOff_event['targetPower']
+        if "electricalData" in raw_onOff_event.keys():
+            self.electrical_data[SmartMeterPhase.ALL].update_electrical_data(raw_onOff_event['electricalData'])
+
+    async def _set_flowNodeMode(self, mode: str):
+        """Set the flow node mode of the device."""
+        if self._set_flowNodeMode_callback is None:
+            _LOGGER.error("No callback set for _set_flowNodeMode")
+            return
+        await self._set_flowNodeMode_callback(mode)
+
+    def __str__(self) -> str:
+        """Get string representation."""
+        return f"Sunology Device: {self.name}::{self.model_name}::{self.unique_id}"
+
+    def update_product(self, raw_event):
+        super().update_product(raw_event)
+        if "features" in raw_event.keys():
+            if "flowNode" in raw_event["features"].keys():
+                self._flowNodeConfig.update_flowNode(raw_event["features"]["flowNode"])
+            if self._features is None:
+                self._features = SmartMeter_ElectricalDataFeatures()
+            self._features.update_electrical_data_feature(raw_event["features"])
+
+class SmartOutlet(OnOffDevice):
+    """Home Assistant representation of a Sunology device Smart."""
+
+    @property
+    def suggested_area(self) -> str:
+        """Get the suggested_area."""
+        return "Livingroom"
+
+    @property
+    def model_name(self) -> str:
+        """Get the model name."""
+        return "Pulse"
+
+class LegrandContactor(OnOffDevice):
+    """Home Assistant representation of a Sunology TAP, the Legrand day/night contactor."""
+
+    def __init__(self, raw_device, set_flowNodeMode_callback: Callable[[str], None] = None):
+        """Initialize TAP device."""
+        super().__init__(raw_device, set_flowNodeMode_callback)
+        self._contactor_mode = None
+
+    @property
+    def suggested_area(self) -> str:
+        """Get the suggested_area."""
+        return "Livingroom"
+
+    @property
+    def model_name(self) -> str:
+        """Get the model name."""
+        return "TAP"
+
+    @property
+    def manufacturer(self) -> str:
+        """Get the manufacturer."""
+        # The hub reports manufacturerName "Sunology" for every device it relays,
+        # including this one. The TAP is a Legrand contactor, don't relay that error.
+        return "Legrand"
+
+    @property
+    def supported_flow_node_modes(self) -> List[str]:
+        """Get the flow node modes the hardware can actually honour.
+
+        ZIGBEE_INTERFACE_setPower() maps a zero target power to LEGRAND_MODE_AUTO, never
+        to LEGRAND_MODE_OFF: the firmware cannot open the contactor on request. Offering
+        FORCED_OFF would return the contactor to AUTO, so it would close again on the
+        off-peak contact. Only expose what the hardware honours.
+        """
+        return [FeatureFlowNodeModes.FLOW.name, FeatureFlowNodeModes.FORCED_ON.name]
+
+    @property
+    def has_energy_metering(self) -> bool:
+        """True when the device reports a cumulated energy counter.
+
+        The TAP binds ELECTRICAL_MEASUREMENT only, never METERING: it reports power but
+        no energy counter, ever.
+        """
+        return False
+
+    @property
+    def contactor_mode(self):
+        """Get the contactor mode reported by the device."""
+        return self._contactor_mode
+
+    @property
+    def status(self):
+        """STREAM app status, see ContactorStatus."""
+        if self._contactor_mode is None:
+            return None
+        if self._contactor_mode == ContactorMode.ON:
+            return ContactorStatus.FORCED_ON
+        if self._contactor_mode == ContactorMode.AUTO:
+            return ContactorStatus.ACTIVE if self._state else ContactorStatus.IDLE
+        return ContactorStatus.UNKNOWN
+
+    def update_onOff_event(self, raw_onOff_event):
+        super().update_onOff_event(raw_onOff_event)
+        if "contactorMode" in raw_onOff_event.keys():
+            self._contactor_mode = raw_onOff_event['contactorMode']
 
 class LinkyTransmitter(SunologyAbstractDevice):
     """Home Assistant representation of a Sunology device Smart."""
