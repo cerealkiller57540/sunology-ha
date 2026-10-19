@@ -13,7 +13,7 @@ from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
 )
 
-from .const import SmartMeterPhase, SmartMeterTarifIndex, ElectricalDataFeature,  PACKAGE_NAME, DOMAIN as SUNOLOGY_DOMAIN
+from .const import SmartMeterPhase, SmartMeterTarifIndex, ElectricalDataFeature, ContactorMode, ContactorStatus,  PACKAGE_NAME, DOMAIN as SUNOLOGY_DOMAIN
 from .device import (
     PLAYMax,
     PLAY,
@@ -27,7 +27,8 @@ from .device import (
     BatteryEventInterface,
     SmartMeter_3P,
     LinkyTransmitter,
-    SmartOutlet,
+    OnOffDevice,
+    LegrandContactor,
     MpptInterface
 )
 
@@ -132,11 +133,26 @@ async def async_setup_entry(hass, config_entry, async_add_entities): # pylint: d
                     new_entities.append(SunologyContractSensorEntity(device, hass))
                     new_entities.append(SunologyCurrentTarifSensorEntity(device, hass))
                 
-                if isinstance(device, SmartOutlet):
+                if isinstance(device, OnOffDevice):
                     new_entities.append(SunologyElectricalDataSensorEntity_Power(device,  SmartMeterPhase.ALL, hass))
                     new_entities.append(SunologyElectricalDataSensorEntity_Power(device,  SmartMeterPhase.ALL, hass, True))
-                    new_entities.append(SunologyTotalImportSensorEntity(device,  SmartMeterPhase.ALL, hass))
-                    new_entities.append(SunologyElectricalDataSensorEntityFeature(device, SmartMeterPhase.ALL, hass))
+                    if not isinstance (device, LegrandContactor):
+                        new_entities.append(SunologyElectricalDataSensorEntity_ApparentPower(device,  SmartMeterPhase.ALL, hass))
+                    # A device without a METERING cluster never reports a cumulated
+                    # counter: an energy sensor would stay None forever and pollute the
+                    # Energy dashboard.
+                    if device.has_energy_metering:
+                        new_entities.append(SunologyTotalImportSensorEntity(device,  SmartMeterPhase.ALL, hass))
+
+                    new_entities.append(SunologyOnOffValueSensorEntity(device, hass, "runtime_on"))
+                    new_entities.append(SunologyOnOffValueSensorEntity(device, hass, "target_power"))
+
+                if isinstance(device, LegrandContactor):
+                    new_entities.append(SunologyContactorStatusSensorEntity(device, hass))
+                    new_entities.append(SunologyContactorModeSensorEntity(device, hass))
+                    new_entities.append(SunologyOnOffValueSensorEntity(device, hass, "min_on_time"))
+                    new_entities.append(SunologyOnOffValueSensorEntity(device, hass, "runtime_min"))
+                    new_entities.append(SunologyOnOffValueSensorEntity(device, hass, "max_cons"))
 
 
                 if isinstance(device, (Gateway)):
@@ -1235,6 +1251,11 @@ class SunologyBatterySocSensorEntity(SensorEntity):
         return SensorDeviceClass.BATTERY
 
     @property
+    def state_class(self):
+        """ Entity state_class: lets HA keep statistics (Energy dashboard, #27) """
+        return SensorStateClass.MEASUREMENT
+
+    @property
     def should_poll(self) -> bool:
         """No need to poll. Coordinator notifies entity of updates."""
         return False
@@ -1586,11 +1607,315 @@ class SunologyElectricalDataSensorEntity_Power(SensorEntity):
         """ Entity state_class """
         return SensorStateClass.MEASUREMENT
 
+class SunologyElectricalDataSensorEntity_ApparentPower(SensorEntity):
+    """Represent the apparent power of a device."""
+
+    def __init__(self, device:SunologyAbstractDevice, phase:SmartMeterPhase, hass):
+        """Set up SunologyElectricalDataSensorEntity_ApparentPower entity."""
+        self._device = device
+        self._name = device.name
+        self._unit_of_measurement = "VA"
+        self._phase = phase
+        self.entity_id = f"{ENTITY_ID_FORMAT.format(f"apparent_power")}_{self._phase}_{_format_devid_mac(device.device_id)}".lower()# pylint: disable=C0301
+        self._state = None
+        self._hass = hass
+
+    @property
+    def entity_category(self):
+        return None
+
+    @property
+    def hass(self):
+        return self._hass
+
+    @hass.setter
+    def hass(self, hass):
+        pass
+
+    @property
+    def unique_id(self):
+        """Return the unique ID."""
+        return f"apparent_power_{self._phase}_{_format_devid_mac(self._device.device_id)}".lower()
+
+    @property
+    def state(self):
+        """state property"""
+        self._state = self._device.electrical_data[self._phase].apparent_power
+        return self._state
+
+    @property
+    def unit_of_measurement(self):
+        """unit of mesurment property"""
+        return self._unit_of_measurement
+
+    @property
+    def name(self):
+        """ Entity name """
+        return f"{self._name} {self._phase} electrical data apparent Power"
+
+    @property
+    def icon(self):
+        """icon getter"""
+        return "mdi:transmission-tower"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return the device info."""
+        return self._device.device_info
+
+    @property
+    def device_class(self):
+        """ Entity device_class """
+        return SensorDeviceClass.APPARENT_POWER
+
+    @property
+    def state_class(self):
+        """ Entity state_class """
+        return SensorStateClass.MEASUREMENT
+
+class SunologyContactorStatusSensorEntity(SensorEntity):
+    """Represent the TAP status as the STREAM app shows it."""
+
+    _attr_translation_key = "contactor_status"
+
+    def __init__(self, device:SunologyAbstractDevice, hass):
+        """Set up SunologyContactorStatusSensorEntity entity."""
+        self._device = device
+        self._name = device.name
+        self.entity_id = f"{ENTITY_ID_FORMAT.format("contactor_status")}_{_format_devid_mac(device.device_id)}".lower()# pylint: disable=C0301
+        self._state = None
+        self._hass = hass
+
+    @property
+    def entity_category(self):
+        return None
+
+    @property
+    def hass(self):
+        return self._hass
+
+    @hass.setter
+    def hass(self, hass):
+        pass
+
+    @property
+    def unique_id(self):
+        """Return the unique ID."""
+        return f"contactor_status_{_format_devid_mac(self._device.device_id)}".lower()
+
+    @property
+    def state(self):
+        """state property"""
+        status = self._device.status
+        self._state = status.value if status is not None else None
+        return self._state
+
+    @property
+    def options(self):
+        """options list property"""
+        return [e.value for e in ContactorStatus]
+
+    @property
+    def extra_state_attributes(self):
+        """Raw values the status is computed from."""
+        mode = self._device.contactor_mode
+        try:
+            mode_name = ContactorMode(mode).name if mode is not None else None
+        except ValueError:
+            mode_name = None
+        return {
+            "contactor_mode": mode_name,
+            "contactor_mode_code": mode,
+            "relay_on": self._device.state,
+            "flow_node_mode": self._device.flowNodeConfig.mode,
+            "target_power": self._device.target_power,
+        }
+
+    @property
+    def name(self):
+        """ Entity name """
+        return f"{self._name} status"
+
+    @property
+    def icon(self):
+        """icon getter"""
+        return "mdi:water-boiler"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return the device info."""
+        return self._device.device_info
+
+    @property
+    def device_class(self):
+        """ Entity device_class """
+        return SensorDeviceClass.ENUM
+
+class SunologyContactorModeSensorEntity(SensorEntity):
+    """Represent the mode reported by a Legrand contactor (TAP)."""
+
+    def __init__(self, device:SunologyAbstractDevice, hass):
+        """Set up SunologyContactorModeSensorEntity entity."""
+
+        self._device = device
+        self._name = device.name
+        self.entity_id = f"{ENTITY_ID_FORMAT.format(f"contactor_mode")}_{_format_devid_mac(device.device_id)}".lower()# pylint: disable=C0301
+        self._state = None
+        self._hass = hass
+
+    @property
+    def entity_category(self):
+        # Raw firmware value; the user-facing value is SunologyContactorStatusSensorEntity.
+        return EntityCategory.DIAGNOSTIC
+
+    @property
+    def extra_state_attributes(self):
+        """Raw numeric code, as sent on the LAN WebSocket."""
+        return {"code": self._device.contactor_mode}
+
+    @property
+    def hass(self):
+        return self._hass
+
+    @hass.setter
+    def hass(self, hass):
+        pass
+
+    @property
+    def unique_id(self):
+        """Return the unique ID."""
+        return f"contactor_mode_{_format_devid_mac(self._device.device_id)}".lower()
+
+    @property
+    def state(self):
+        """state property
+
+        Tells a relay closed by the Flow apart from one closed by the off-peak contact.
+        """
+        raw_mode = self._device.contactor_mode
+        if raw_mode is None:
+            self._state = None
+            return self._state
+        try:
+            self._state = ContactorMode(raw_mode).name
+        except ValueError:
+            _LOGGER.warning("Unknown contactor mode received: %s", raw_mode)
+            self._state = None
+        return self._state
+
+    @property
+    def options(self):
+        """options list property"""
+        return [e.name for e in ContactorMode]
+
+    @property
+    def name(self):
+        """ Entity name """
+        return f"{self._name} contactor mode"
+
+    @property
+    def icon(self):
+        """icon getter"""
+        return "mdi:electric-switch"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return the device info."""
+        return self._device.device_info
+
+    @property
+    def device_class(self):
+        """ Entity device_class """
+        return SensorDeviceClass.ENUM
+
+# key -> (value getter, label, unit, device class, state class, icon, diagnostic)
+_ON_OFF_VALUES = {
+    "runtime_on": (lambda d: d.runtime_on, "runtime today", "min",
+                   SensorDeviceClass.DURATION, SensorStateClass.TOTAL_INCREASING, "mdi:timer-play-outline", False),
+    "target_power": (lambda d: d.target_power, "flow target power", "W",
+                     SensorDeviceClass.POWER, SensorStateClass.MEASUREMENT, "mdi:target", False),
+    # Flow node configuration, written by the STREAM app from the hot water tank
+    # capacity and power (backend_mobile ClientConsumptionDeviceService).
+    "min_on_time": (lambda d: d.flowNodeConfig.minOnTime, "forced on minimal duration", "s",
+                    SensorDeviceClass.DURATION, None, "mdi:timer-lock-outline", True),
+    "runtime_min": (lambda d: d.flowNodeConfig.runtimeMin, "daily minimal runtime", "min",
+                    SensorDeviceClass.DURATION, None, "mdi:timer-sand", True),
+    "max_cons": (lambda d: d.flowNodeConfig.maxCons, "driven load power", "W",
+                 SensorDeviceClass.POWER, None, "mdi:water-boiler", True),
+}
+
+class SunologyOnOffValueSensorEntity(SensorEntity):
+    """Represent a numeric value of an on/off device (Flow runtime, target, config)."""
+
+    def __init__(self, device:SunologyAbstractDevice, hass, key:str):
+        """Set up SunologyOnOffValueSensorEntity entity."""
+        self._device = device
+        self._name = device.name
+        self._key = key
+        (self._getter, self._label, self._unit_of_measurement, self._device_class,
+         self._state_class, self._icon, self._diagnostic) = _ON_OFF_VALUES[key]
+        self.entity_id = f"{ENTITY_ID_FORMAT.format(key)}_{_format_devid_mac(device.device_id)}".lower()# pylint: disable=C0301
+        self._state = None
+        self._hass = hass
+
+    @property
+    def entity_category(self):
+        return EntityCategory.DIAGNOSTIC if self._diagnostic else None
+
+    @property
+    def hass(self):
+        return self._hass
+
+    @hass.setter
+    def hass(self, hass):
+        pass
+
+    @property
+    def unique_id(self):
+        """Return the unique ID."""
+        return f"{self._key}_{_format_devid_mac(self._device.device_id)}".lower()
+
+    @property
+    def state(self):
+        """state property"""
+        self._state = self._getter(self._device)
+        return self._state
+
+    @property
+    def unit_of_measurement(self):
+        """unit of mesurment property"""
+        return self._unit_of_measurement
+
+    @property
+    def name(self):
+        """ Entity name """
+        return f"{self._name} {self._label}"
+
+    @property
+    def icon(self):
+        """icon getter"""
+        return self._icon
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return the device info."""
+        return self._device.device_info
+
+    @property
+    def device_class(self):
+        """ Entity device_class """
+        return self._device_class
+
+    @property
+    def state_class(self):
+        """ Entity state_class """
+        return self._state_class
+
 class SunologyElectricalDataSensorEntityFeature(SensorEntity):
     """Represent a mipower of a  device."""
 
     def __init__(self, device:SunologyAbstractDevice, phase:SmartMeterPhase, hass):
-        """Set up SunologBatteryPowerSensor entity.""" 
+        """Set up SunologBatteryPowerSensor entity."""
         self._device = device
         self._name = device.name
         self._phase = phase

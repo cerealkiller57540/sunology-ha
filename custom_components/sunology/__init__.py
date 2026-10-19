@@ -19,6 +19,7 @@ from homeassistant.setup import async_when_setup
 from homeassistant.const import Platform
 from homeassistant.components import zeroconf
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
     DataUpdateCoordinator,
@@ -38,7 +39,9 @@ from .device import (
     SolarEventInterface,
     BatteryEventInterface,
     SmartMeter_3P,
+    OnOffDevice,
     SmartOutlet,
+    LegrandContactor,
     LinkyTransmitter,
     CITY,
     HOMEInverter
@@ -48,6 +51,9 @@ from .const import (
     CONF_GATEWAY_HOST,
     CONF_GATEWAY_PORT,
     MIN_UNTIL_REFRESH,
+    CONF_IGNORED_DEVICES,
+    RECONNECT_BACKOFF_BASE,
+    RECONNECT_BACKOFF_MAX,
     DOMAIN,
     PACKAGE_NAME,
     FlowWorkingModes
@@ -55,7 +61,7 @@ from .const import (
 
 _LOGGER = logging.getLogger(PACKAGE_NAME)
 
-PLATFORMS = [Platform.SENSOR, Platform.SWITCH, Platform.SELECT]
+PLATFORMS = [Platform.SENSOR, Platform.SWITCH, Platform.SELECT, Platform.BINARY_SENSOR]
 
 
 async def async_setup_entry(hass, entry: SunologyConfigEntry):
@@ -82,22 +88,60 @@ async def async_setup_entry(hass, entry: SunologyConfigEntry):
 
 async def async_unload_entry(hass, entry: SunologyConfigEntry):
     """Unload an Sunology config entry."""
-    unload_ok = True
-    # unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)   
     context = entry.runtime_data
+    # Stop reconnecting first: closing the socket below ends the receive loop,
+    # which reports a disconnection that must not schedule a new connection.
     context.unload()
-    await context.socket.disconnect() # Disconnect only if all devices is disabled
-    return unload_ok
+    await context.socket.disconnect()
+    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
 
 async def async_remove_config_entry_device(hass, config_entry: SunologyConfigEntry, device_entry) -> bool:
-    """Remove a config entry from a device."""
-    return not any(
-        identifier
-        for identifier in device_entry.identifiers
-        if identifier[0] == DOMAIN
-        and identifier[1] in [sunology_device.device_id for sunology_device in config_entry.runtime_data.sunology_devices]
-    )
+    """Let the user delete a device (#10).
+
+    The hub keeps listing a paired accessory even when it is unplugged or replaced, so
+    "still reported by the hub" says nothing about whether the device still exists.
+    Everything can be deleted except the STREAM Connect itself, whose removal is the
+    removal of the integration. A deleted id is ignored until it is paired again.
+    """
+    context = config_entry.runtime_data
+    sunology_ids = {identifier[1] for identifier in device_entry.identifiers if identifier[0] == DOMAIN}
+    if not sunology_ids:
+        return True
+    for device in context.sunology_devices:
+        if device.device_id in sunology_ids and isinstance(device, Gateway):
+            _LOGGER.warning("The STREAM Connect cannot be deleted alone, remove the integration instead")
+            return False
+    context.forget_devices(sunology_ids)
+    return True
+
+
+def _get_device(device_registry, device_id, config_entry_id):
+    """Registry device of this entry for a Sunology id.
+
+    HA 2026.9 made identifiers non unique across config entries and deprecated the
+    bare async_get_device(identifiers=...) lookup in favour of a per-entry one.
+    """
+    identifier = (DOMAIN, device_id)
+    if hasattr(device_registry, "async_get_device_by_identifier"):
+        return device_registry.async_get_device_by_identifier(identifier, config_entry_id)
+    return device_registry.async_get_device(identifiers={identifier})
+
+
+def _update_entities(coordinated_device):
+    """Push the device state to its entities still attached to a platform.
+
+    A platform reload (new device discovered) recreates every entity; the old
+    objects are detached (platform None) and must not be written to, which is what
+    HA reports as "does not have a platform" (#24 / #25).
+    """
+    entities = coordinated_device.get('device_entities', [])
+    live = [entity for entity in entities if entity.platform is not None and entity.hass is not None]
+    if len(live) != len(entities):
+        coordinated_device['device_entities'] = live
+    for entity in live:
+        _LOGGER.debug('Update entity %s', entity.entity_id)
+        entity.schedule_update_ha_state(force_refresh=False)
 
 
 class SunologyContext:
@@ -118,6 +162,10 @@ class SunologyContext:
         self._connection_atempt = 0
         self._previous_refresh = math.floor(time.time()/60)
         self._coroutines_future = []
+        # Single connection driver: at most one connect attempt alive at a time,
+        # whoever asks for it (disconnect callback or periodic refresh).
+        self._connect_future = None
+        self._unloading = False
 
     @property
     def hass(self):
@@ -145,14 +193,42 @@ class SunologyContext:
         self._sunology_devices = devices
     
     def unload(self):
-        """ hass """
+        """ Stop every pending task and never reconnect again. """
+        self._unloading = True
         for future in self._coroutines_future:
             future.cancel()
         self._coroutines_future = []
+        if self._connect_future is not None:
+            self._connect_future.cancel()
+            self._connect_future = None
+
+    def _reconnect_delay(self) -> float:
+        """Backoff before the next attempt: immediate first, then doubling, capped."""
+        if self._connection_atempt == 0:
+            return 0
+        return min(RECONNECT_BACKOFF_BASE * 2 ** (self._connection_atempt - 1), RECONNECT_BACKOFF_MAX)
+
+    def _schedule_connect(self):
+        """Schedule a connection attempt unless one is pending or the entry is unloading."""
+        if self._unloading:
+            _LOGGER.debug("Entry unloading, no reconnection")
+            return
+        if self._connect_future is not None and not self._connect_future.done():
+            _LOGGER.debug("Connection attempt already pending")
+            return
+        delay = self._reconnect_delay()
+        _LOGGER.info("Sunology socket connection in %ss (attempt %s)", delay, self._connection_atempt)
+        self._connection_atempt += 1
+        self._connect_future = asyncio.run_coroutine_threadsafe(
+            self._async_connect(self.socket, self.gateway_host, self.gateway_port, None, delay),
+            self._hass.loop,
+        )
 
 
-    async def _async_connect(self, socket, host, port, token):
+    async def _async_connect(self, socket, host, port, token, delay=0):
         """connect to Sunology socket"""
+        if delay:
+            await asyncio.sleep(delay)
         _LOGGER.info("Sunology socket connection")
         host_ip = host
         if host.endswith('.local') or host.endswith('.local.'):
@@ -183,15 +259,13 @@ class SunologyContext:
         socket.subscribe_on_batteryEvent(self.on_batteryEvent_callback)
         socket.subscribe_on_gridEvent(self.on_gridEvent_callback)
         socket.subscribe_on_onOffEvent(self.on_onOffEvent_callback)
+        socket.subscribe_on_justPaired(self.on_justPaired_callback)
 
         socket.subscribe_on_connect(self.on_connect_callback)
         socket.subscribe_on_disconnect(self.on_disconnect_callback)
 
         self._socket = socket
-
-        self._coroutines_future.append(asyncio.run_coroutine_threadsafe(
-            self._async_connect(socket, self.gateway_host, self.gateway_port, None), self._hass.loop
-        ))
+        self._schedule_connect()
 
     async def get_device(self, device_id):
         """ here we return last device by id"""
@@ -252,9 +326,38 @@ class SunologyContext:
         return coordinator
     
     def remove_devices_from_coordinator(self, device: SunologyAbstractDevice):
-        for coordinated_device in self._sunology_devices_coordinated:
-            if device.unique_id == coordinated_device['device'].unique_id:
-                self._sunology_devices_coordinated.remove(coordinated_device)
+        # Rebuild instead of removing while iterating, which skipped the next item.
+        self._sunology_devices_coordinated = [
+            coordinated_device for coordinated_device in self._sunology_devices_coordinated
+            if coordinated_device['device'].unique_id != device.unique_id
+        ]
+
+    @property
+    def ignored_devices(self) -> set:
+        """Sunology ids the user deleted, see CONF_IGNORED_DEVICES."""
+        return set(self._entry.options.get(CONF_IGNORED_DEVICES, []))
+
+    def _set_ignored_devices(self, ids: set):
+        self._hass.config_entries.async_update_entry(
+            self._entry, options={**self._entry.options, CONF_IGNORED_DEVICES: sorted(ids)}
+        )
+
+    def forget_devices(self, device_ids: set):
+        """Drop deleted devices (and Storey packs of a deleted Storey) and ignore them."""
+        def deleted(device):
+            return device.device_id in device_ids or device.device_id.split("#")[0] in device_ids
+        for device in [d for d in self._sunology_devices if deleted(d)]:
+            _LOGGER.info("Device %s deleted by the user, ignored until paired again", device.device_id)
+            self._sunology_devices.remove(device)
+            self.remove_devices_from_coordinator(device)
+        self._set_ignored_devices(self.ignored_devices | set(device_ids))
+
+    def on_justPaired_callback(self, product_data):
+        """A device joined the hub: un-ignore it if the user had deleted it, then add it."""
+        if product_data.get('id') in self.ignored_devices:
+            _LOGGER.info("Device %s paired again, no longer ignored", product_data['id'])
+            self._set_ignored_devices(self.ignored_devices - {product_data['id']})
+        self.on_productInfo_callback(product_data)
 
     async def refresh_devices(self):
         """ here we return last device by id"""
@@ -262,22 +365,51 @@ class SunologyContext:
         epoch_min = math.floor(time.time()/60)
         if not self.socket.is_connected:
             _LOGGER.info("Socket not connected detected, atempt: %s", self._connection_atempt)
-            self._coroutines_future.append(asyncio.run_coroutine_threadsafe(
-                self._async_connect(self.socket, self.gateway_host, self.gateway_port, None), self._hass.loop
-            ))
-            self._connection_atempt+=1
+            self._schedule_connect()
 
         if epoch_min != self._previous_refresh:
             self._previous_refresh =  epoch_min
-            for device_coordinated in self._sunology_devices_coordinated:
-                if device_coordinated['device'].device_entry_id is None:
-                    await device_coordinated['device'].register(self.hass, self._entry)
+            if any(
+                device_coordinated['device'].device_entry_id is None
+                for device_coordinated in self._sunology_devices_coordinated
+            ):
+                self._register_devices()
+
+    @callback
+    def _register_devices(self):
+        """Register the devices parents first, so each child links to its parent by id."""
+        device_registry = dr.async_get(self.hass)
+        pending = list(self._sunology_devices)
+        while pending:
+            deferred = []
+            for device in pending:
+                via_device_id = None
+                if device.parent_id is not None:
+                    parent = _get_device(device_registry, device.parent_id, self._entry.entry_id)
+                    if parent is None and any(
+                        other.device_id == device.parent_id for other in pending if other is not device
+                    ):
+                        # The parent is known but not registered yet: next pass
+                        deferred.append(device)
+                        continue
+                    via_device_id = parent.id if parent is not None else None
+                device.register(device_registry, self._entry, via_device_id)
+            if len(deferred) == len(pending):
+                # Parent loop, should not happen: register without link rather than never
+                for device in deferred:
+                    device.register(device_registry, self._entry, None)
+                break
+            pending = deferred
     
     async def _reload_platforms(self, epoch_min = math.floor(time.time()/60)):
         _LOGGER.info("Call reload platforms")
         self._previous_refresh =  epoch_min
         if self._entry.state == ConfigEntryState.LOADED:
+            self._register_devices()
             await self.hass.config_entries.async_unload_platforms(self._entry, PLATFORMS)
+            # Entities are recreated by the setup below: forget the detached ones.
+            for coordinated_device in self._sunology_devices_coordinated:
+                coordinated_device['device_entities'] = []
             await self.hass.config_entries.async_forward_entry_setups(self._entry, PLATFORMS)
 
     @property
@@ -321,6 +453,9 @@ class SunologyContext:
     def process_new_device(self, product_data):
         new_devices = []
         found = False
+        if product_data.get('id') in self.ignored_devices:
+            _LOGGER.debug("Device %s deleted by the user, ignored", product_data['id'])
+            return new_devices
         for coordinated_device in self._sunology_devices_coordinated:
             _LOGGER.debug("Check if device %s is already known %s", product_data['id'], coordinated_device['device'].device_id)
             if 'device' in coordinated_device.keys():
@@ -379,6 +514,12 @@ class SunologyContext:
                     async def set_flowNodeMode_callback(mode: str, captured_id=device_id):
                         await self.send_setFlowNodeMode(captured_id, mode)
                     new_devices.append(SmartOutlet(product_data, set_flowNodeMode_callback))
+                case "LEGRAND_CONTACTOR":
+                    # Sunology TAP, the Legrand day/night contactor
+                    device_id = product_data['id']
+                    async def set_flowNodeMode_callback(mode: str, captured_id=device_id):
+                        await self.send_setFlowNodeMode(captured_id, mode)
+                    new_devices.append(LegrandContactor(product_data, set_flowNodeMode_callback))
                 case "STOREY":
                     master = StoreyMaster(product_data)
                     products_valid=True
@@ -446,10 +587,7 @@ class SunologyContext:
                     "device_id": device.unique_id,
                     "device_name": device.name,
                 }
-                if 'device_entities' in coordinated_device.keys():
-                    for entity in coordinated_device['device_entities']:
-                        _LOGGER.debug('Update entity %s', entity.entity_id)
-                        entity.schedule_update_ha_state(force_refresh=False)
+                _update_entities(coordinated_device)
                 break
     
     @callback
@@ -467,20 +605,14 @@ class SunologyContext:
                         device.acVoltage = data['acVoltage']
                     if 'battery' in data.keys():
                         device.battery_event_update(data['battery'])
-                    if 'device_entities' in coordinated_device.keys():
-                        for entity in coordinated_device['device_entities']:
-                            _LOGGER.debug('Update entity %s', entity.entity_id)
-                            entity.schedule_update_ha_state(force_refresh=False)
+                    _update_entities(coordinated_device)
                     if 'packs' in data.keys():
                         for pack in data['packs']:
                             for sub_coordinated_device in self._sunology_devices_coordinated:
                                 sub_device = sub_coordinated_device['device']
                                 if sub_device.device_id == f"{data['id']}#{pack['packIndex'] }":
                                     sub_device.battery_event_update(pack)
-                                    if 'device_entities' in sub_coordinated_device.keys():
-                                        for entity in sub_coordinated_device['device_entities']:
-                                            _LOGGER.debug('Update entity %s', entity.entity_id)
-                                            entity.schedule_update_ha_state(force_refresh=False)
+                                    _update_entities(sub_coordinated_device)
                                     break
                 else:
                     _LOGGER.info("Solar event receive on non storey master device")
@@ -496,10 +628,7 @@ class SunologyContext:
             if device.device_id == data['id']:
                 if isinstance(device, (SmartMeter_3P, LinkyTransmitter)):
                     device.update_gridevent(data)
-                    if 'device_entities' in coordinated_device.keys():
-                        for entity in coordinated_device['device_entities']:
-                            _LOGGER.debug('Update entity %s', entity.entity_id)
-                            entity.schedule_update_ha_state(force_refresh=False)
+                    _update_entities(coordinated_device)
                 else:
                     _LOGGER.info("Grid event receive on non grid meter device")
                 event_data = {
@@ -516,14 +645,11 @@ class SunologyContext:
             device = coordinated_device['device']
             coordinator = coordinated_device['coordinator']
             if device.device_id == data['id']:
-                if isinstance(device, (SmartOutlet)):
+                if isinstance(device, (OnOffDevice)):
                     device.update_onOff_event(data)
-                    if 'device_entities' in coordinated_device.keys():
-                        for entity in coordinated_device['device_entities']:
-                            _LOGGER.debug('Update entity %s', entity.entity_id)
-                            entity.schedule_update_ha_state(force_refresh=False)
+                    _update_entities(coordinated_device)
                 else:
-                    _LOGGER.info("OnOff event receive on non grid meter device")
+                    _LOGGER.info("OnOff event receive on non on/off device")
                 event_data = {
                     "device_id": device.unique_id,
                     "device_name": device.name,
@@ -539,7 +665,7 @@ class SunologyContext:
     def on_disconnect_callback(self):
         """on gridEvent callback"""
         _LOGGER.info("On disconnect received %s", self._connection_atempt)
-        self._coroutines_future.append(asyncio.run_coroutine_threadsafe(
-            self._async_connect(self.socket, self.gateway_host, self.gateway_port, None), self._hass.loop
-        ))
-        self._connection_atempt+=1
+        # Called from the finally block of the very connection task that is ending:
+        # it no longer counts as a pending attempt.
+        self._connect_future = None
+        self._schedule_connect()

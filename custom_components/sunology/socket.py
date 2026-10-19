@@ -18,6 +18,7 @@ class SunologySocket():
         self._on_batteryEvent_callback = None
         self._on_gridEvent_callback = None
         self._on_onOffEvent_callback = None
+        self._on_justPaired_callback = None
         self._on_connect_callback = None
         self._on_disconnect_callback = None
         self._socket = None
@@ -32,6 +33,10 @@ class SunologySocket():
         """event: tells you authentication informations."""
         self._on_solarEvent_callback = callback_function
     
+    def subscribe_on_justPaired(self, callback_function):
+        """event: a device has just been paired to the gateway."""
+        self._on_justPaired_callback = callback_function
+
     def subscribe_on_onOffEvent(self, callback_function):
         """event: tells you authentication informations."""
         self._on_onOffEvent_callback = callback_function
@@ -75,6 +80,12 @@ class SunologySocket():
         _LOGGER.debug('SolarEvent received: %s', data)
         self._execute_callback_function_safe('on_solarEvent', self._on_solarEvent_callback, data)
     
+    def on_justPaired(self, data):
+        """ on_justPaired: falls back to productInfo handling without a subscriber """
+        _LOGGER.debug('JustPaired received: %s', data)
+        callback_function = self._on_justPaired_callback or self._on_productInfo_callback
+        self._execute_callback_function_safe('on_justPaired', callback_function, data)
+
     def on_onOffEvent(self, data):
         """ on_solarEvent """
         _LOGGER.debug('OnOffEvent received: %s', data)
@@ -122,6 +133,10 @@ class SunologySocket():
                         self.on_gridEvent(message['data'])
                     case "onOffEvent":
                         self.on_onOffEvent(message['data'])
+                    case "justPaired":
+                        # Sent once when an accessory joins; data is its productInfo
+                        # (fw-sconnect JSON_TOOLS_getLan_DeviceJustPairedContent).
+                        self.on_justPaired(message['data'])
                     case _:
                         _LOGGER.warning('Unmanaged event received: %s', message['event'])
             else:
@@ -148,6 +163,9 @@ class SunologySocket():
         _LOGGER.debug('Socket not connected')
 
         try:
+            # end_timeout only bounds the handshake. It must never wrap the receive
+            # loop below: asyncio.timeout is a deadline on its whole block, so a
+            # healthy connection would be torn down after end_timeout seconds.
             async with asyncio.timeout(end_timeout):
                 if auth_token is not None:
                     _LOGGER.info('Auth connection')
@@ -169,22 +187,24 @@ class SunologySocket():
                         close_timeout=10
                     )
 
-                self._socket = websocket
-                self._connected = True
-                self.on_connect()
+            self._socket = websocket
+            self._connected = True
+            self.on_connect()
 
-                try:
-                    async for message in self._socket:
-                        self.process(message)
-                except ConnectionClosed:
-                    _LOGGER.info("Connection closed by server")
-                except asyncio.TimeoutError:
-                    _LOGGER.warning("Message receive timeout")
-                except Exception as e:
-                    _LOGGER.warning(f"Error receiving message: {e}")
+            # Lost links are detected by the websockets keepalive (ping_interval /
+            # ping_timeout), which closes the connection and ends this iteration.
+            try:
+                async for message in self._socket:
+                    self.process(message)
+            except ConnectionClosed:
+                _LOGGER.info("Connection closed by server")
+            except asyncio.TimeoutError:
+                _LOGGER.warning("Message receive timeout")
+            except Exception as e:
+                _LOGGER.warning(f"Error receiving message: {e}")
 
         except asyncio.TimeoutError:
-            _LOGGER.warning("Connection timeout - server unreachable")
+            _LOGGER.warning("Handshake timeout - server unreachable")
         except ConnectionClosed:
             _LOGGER.info("Connection closed during setup")
         except Exception as e:
@@ -207,4 +227,5 @@ class SunologySocket():
                 await self._socket.close()
             except Exception:
                 _LOGGER.debug("Error closing socket", exc_info=True)
-        self.on_disconnect()
+        # No on_disconnect() here: closing the socket ends the receive loop of
+        # connect(), whose finally block reports the disconnection exactly once.

@@ -20,3 +20,17 @@ jobs:
         with:
           category: "integration"
           #ignore: brands integration_manifest hacsjson
+  tests:
+    runs-on: "ubuntu-latest"
+    strategy:
+      matrix:
+        # 3.13 resolves to the last HA core supporting it (2026.2.x, old via_device API),
+        # 3.14 to the current core (2026.9+, via_device_id): both code paths are exercised.
+        python-version: ["3.13", "3.14"]
+    steps:
+      - uses: "actions/checkout@v4"
+      - uses: "actions/setup-python@v5"
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -r requirements_test.txt
+      - run: python -m pytest -q

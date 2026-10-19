@@ -7,11 +7,11 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.components.select import SelectEntity, ENTITY_ID_FORMAT
 
 
-from .const import FlowWorkingModes, FeatureFlowNodeModes, PACKAGE_NAME, DOMAIN as SUNOLOGY_DOMAIN
+from .const import FlowWorkingModes, PACKAGE_NAME, DOMAIN as SUNOLOGY_DOMAIN
 from .device import (
     SunologyAbstractDevice,
     Gateway,
-    SmartOutlet
+    OnOffDevice
 )
 
 _LOGGER = logging.getLogger(PACKAGE_NAME) 
@@ -49,7 +49,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities): # pylint: d
                 if isinstance(device, Gateway):
                     new_entities.append(SunologyFlowWorkingModeSelectEntity(device, hass))
                 
-                if isinstance(device, SmartOutlet):
+                if isinstance(device, OnOffDevice):
                     new_entities.append(SunologyFlowNodeModeSelectEntity(device, hass))
 
                 if not 'device_entities' in coordinated_device: 
@@ -128,10 +128,10 @@ class SunologyFlowWorkingModeSelectEntity(SelectEntity):
         return self._device.device_info
 
 class SunologyFlowNodeModeSelectEntity(SelectEntity):
-    """Represent a flow node mode of a SmartOutlet device."""
+    """Represent a flow node mode of an on/off device."""
 
     def __init__(self, device:SunologyAbstractDevice, hass):
-        """Set up SunologyFlowNodeModeSelectEntity for SmartOutlet device."""
+        """Set up SunologyFlowNodeModeSelectEntity for an on/off device."""
         
         self._device = device
         self._name = device.name
@@ -171,8 +171,8 @@ class SunologyFlowNodeModeSelectEntity(SelectEntity):
     @property
     def options(self):
         """options list property"""
-        return [e.name for e in FeatureFlowNodeModes]
-    
+        return self._device.supported_flow_node_modes
+
 
     async def async_select_option(self, option: str) -> None:
         """Change the selected option."""
